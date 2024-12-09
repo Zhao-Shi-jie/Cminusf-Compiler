@@ -1,3 +1,4 @@
+%debug
 %{
 #include <stdio.h>
 #include <stdlib.h>
@@ -67,9 +68,10 @@ syntax_tree_node *node(const char *node_name, int children_num, ...);
 %token <node> INTEGER
 %token <node> FLOAT             // 这个token 对应float 关键字
 %token <node> FLOATPOINT        // 这个token 对应 浮点数值, 如果分不清的同学可以参考type-specifier的文法和对应产生式规则
-//%token <node> EOL
-//%token <node> BLANK
-//%token <node> COMMENT
+%token <node> STRING
+%token <node> EOL
+%token <node> BLANK
+%token <node> COMMENT
 %type <node> program declaration-list declaration var-declaration type-specifier fun-declaration params param-list param compound-stmt local-declarations statement-list statement expression-stmt selection-stmt iteration-stmt return-stmt expression var simple-expression relop additive-expression addop term mulop factor integer float call args arg-list
 
 /* compulsory starting symbol */
@@ -117,13 +119,94 @@ compound-stmt 	: 	LBRACE local-declarations statement-list RBRACE {$$ = node( "c
 				;
 
 local-declarations 	: 	local-declarations var-declaration {$$ = node( "local-declarations", 2, $1, $2);}
-| 	{$$ = node( "local-declarations",0);}
+                    | 	{$$ = node( "local-declarations",0);}
 					;
 
 statement-list 	: 	statement-list statement {$$ = node( "statement-list", 2, $1, $2);}
-| 	{$$ = node( "statement-list",0);}
-                    ;
+                | 	{$$ = node( "statement-list",0);}
+                ;
 // TODO: phase1. 补充其他的文法产生式逻辑
+statement   :   expression-stmt      { $$ = node("statement", 1, $1); }
+            |   compound-stmt         { $$ = node("statement", 1, $1); }
+            |   selection-stmt        { $$ = node("statement", 1, $1); }
+            |   iteration-stmt        { $$ = node("statement", 1, $1); }
+            |   return-stmt           { $$ = node("statement", 1, $1); }
+            ;
+
+expression-stmt    :    expression SEMICOLON    { $$ = node("expression-stmt", 2, $1, $2); }
+                   |    SEMICOLON               { $$ = node("expression-stmt", 1, $1); }
+
+selection-stmt     :    IF LPARENTHESE expression RPARENTHESE statement   { $$ = node("selection-stmt", 4, $1, $2, $3, $4); }
+                   |    IF LPARENTHESE expression RPARENTHESE statement ELSE statement    {$$ = node("selection-stmt", 4, $1, $2, $3, $4, $5, $6); }
+                   ;
+
+iteration-stmt  :   WHILE LPARENTHESE expression RPARENTHESE statement    { $$ = node("iteration-stmt", 5, $1, $2, $3, $4, $5); }
+                ;
+
+return-stmt     :   RETURN SEMICOLON    { $$ = node("return-stmt", 2, $1, $2); }
+                |   RETURN expression SEMICOLON     { $$ = node("return-stmt", 3, $1, $2, $3); }
+                ;
+
+expression      :   var ASSIGN expression   { $$ = node("expression", 3, $1, $2, $3); }
+                |   simple-expression   { $$ = node("expression", 1, $1); }
+                ;
+
+var             :   IDENTIFIER      { $$ = node("var", 1, $1); }
+                |   IDENTIFIER LBRACKET expression RBRACKET     { $$ = node("var", 4, $1, $2, $3, $4); }
+                ;
+
+simple-expression   :   additive-expression relop additive-expression   { $$ = node("simple-expression", 3, $1, $2, $3); }
+                    |   additive-expression     { $$ = node("simple-expression", 1, $1); }
+                    ;
+
+relop   :   LTE { $$ = node("relop", 1, $1); }
+        |   LT  { $$ = node("relop", 1, $1); }
+        |   GT  { $$ = node("relop", 1, $1); }
+        |   GTE { $$ = node("relop", 1, $1); }
+        |   EQ  { $$ = node("relop", 1, $1); }
+        |   NEQ { $$ = node("relop", 1, $1); }
+        ;
+
+additive-expression     :   additive-expression addop term { $$ = node("additive-expression", 3, $1, $2, $3); }
+                        |   term { $$ = node("additive-expression", 1, $1); }
+                        ;
+
+addop   :   ADD    { $$ = node("addop", 1, $1); }
+        |   SUB    { $$ = node("addop", 1, $1); }
+        ;
+
+term    :   term mulop factor { $$ = node("term", 3, $1, $2, $3); }
+        |   factor { $$ = node("term", 1, $1); }
+        ;
+
+mulop   :   MUL { $$ = node("mulop", 1, $1); }
+        |   DIV { $$ = node("mulop", 1, $1); }
+        ;
+
+factor  :   RPARENTHESE expression RPARENTHESE { $$ = node("factor", 3, $1, $2, $3); }
+        |   var { $$ = node("factor", 1, $1); }
+        |   call { $$ = node("factor", 1, $1); }
+        |   integer { $$ = node("factor", 1, $1); }
+        |   float { $$ = node("factor", 1, $1); }
+        ;
+
+integer :   INTEGER { $$ = node("integer", 1, $1); }
+        ;
+
+float   :   FLOATPOINT { $$ = node("float", 1, $1); }
+        ;
+
+call    :   IDENTIFIER RPARENTHESE args RPARENTHESE { $$ = node("call", 4,  $1, $2, $3, $4); }
+        ;
+
+args    :   arg-list { $$ = node("args", 1, $1); }
+        |   { $$ = node("args", 0); }
+        ;
+
+arg-list    :   arg-list COMMA expression { $$ = node("arg-list", 3, $1, $2, $3); }
+            |   expression { $$ = node("arg-list", 1, $1); }
+            ;
+
 
 %%
 
