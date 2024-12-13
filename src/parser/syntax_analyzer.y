@@ -69,9 +69,9 @@ syntax_tree_node *node(const char *node_name, int children_num, ...);
 %token <node> FLOAT             // 这个token 对应float 关键字
 %token <node> FLOATPOINT        // 这个token 对应 浮点数值, 如果分不清的同学可以参考type-specifier的文法和对应产生式规则
 %token <node> STRING
-%token <node> EOL
-%token <node> BLANK
-%token <node> COMMENT
+//%token <node> EOL
+//%token <node> BLANK
+//%token <node> COMMENT
 %type <node> program declaration-list declaration var-declaration type-specifier fun-declaration params param-list param compound-stmt local-declarations statement-list statement expression-stmt selection-stmt iteration-stmt return-stmt expression var simple-expression relop additive-expression addop term mulop factor integer float call args arg-list
 
 /* compulsory starting symbol */
@@ -135,9 +135,10 @@ statement   :   expression-stmt      { $$ = node("statement", 1, $1); }
 
 expression-stmt    :    expression SEMICOLON    { $$ = node("expression-stmt", 2, $1, $2); }
                    |    SEMICOLON               { $$ = node("expression-stmt", 1, $1); }
+                   ;
 
-selection-stmt     :    IF LPARENTHESE expression RPARENTHESE statement   { $$ = node("selection-stmt", 4, $1, $2, $3, $4); }
-                   |    IF LPARENTHESE expression RPARENTHESE statement ELSE statement    {$$ = node("selection-stmt", 4, $1, $2, $3, $4, $5, $6); }
+selection-stmt     :    IF LPARENTHESE expression RPARENTHESE statement   { $$ = node("selection-stmt", 5, $1, $2, $3, $4, $5); }
+                   |    IF LPARENTHESE expression RPARENTHESE statement ELSE statement    {$$ = node("selection-stmt", 7, $1, $2, $3, $4, $5, $6, $7); }
                    ;
 
 iteration-stmt  :   WHILE LPARENTHESE expression RPARENTHESE statement    { $$ = node("iteration-stmt", 5, $1, $2, $3, $4, $5); }
@@ -183,7 +184,7 @@ mulop   :   MUL { $$ = node("mulop", 1, $1); }
         |   DIV { $$ = node("mulop", 1, $1); }
         ;
 
-factor  :   RPARENTHESE expression RPARENTHESE { $$ = node("factor", 3, $1, $2, $3); }
+factor  :   LPARENTHESE expression RPARENTHESE { $$ = node("factor", 3, $1, $2, $3); }
         |   var { $$ = node("factor", 1, $1); }
         |   call { $$ = node("factor", 1, $1); }
         |   integer { $$ = node("factor", 1, $1); }
@@ -196,7 +197,7 @@ integer :   INTEGER { $$ = node("integer", 1, $1); }
 float   :   FLOATPOINT { $$ = node("float", 1, $1); }
         ;
 
-call    :   IDENTIFIER RPARENTHESE args RPARENTHESE { $$ = node("call", 4,  $1, $2, $3, $4); }
+call    :   IDENTIFIER LPARENTHESE args RPARENTHESE { $$ = node("call", 4,  $1, $2, $3, $4); }
         ;
 
 args    :   arg-list { $$ = node("args", 1, $1); }
