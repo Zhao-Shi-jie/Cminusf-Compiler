@@ -1,8 +1,12 @@
 #include "ast.hpp"
+#include "syntax_tree.h"
 
 #include <cstring>
 #include <iostream>
+#include <memory>
+#include <ostream>
 #include <stack>
+#include <string>
 
 #define _AST_NODE_ERROR_                                                       \
   std::cerr << "Abort due to node cast error."                                 \
@@ -35,8 +39,7 @@ ASTNode *AST::transform_node_iter(syntax_tree_node *n) {
   if (_STR_EQ(n->name, "program")) {
     auto node = new ASTProgram();
     // flatten declaration list
-    std::stack<syntax_tree_node *>
-        s; // 为什么这里要用stack呢？如果用其他数据结构应该如何实现
+    std::stack<syntax_tree_node *> s; // 为什么这里要用stack呢？如果用其他数据结构应该如何实现
     auto list_ptr = n->children[0];
     while (list_ptr->children_num == 2) {
       s.push(list_ptr->children[1]);
@@ -104,8 +107,36 @@ ASTNode *AST::transform_node_iter(syntax_tree_node *n) {
     */
     // TODO: 1.fill in the fields of ASTFunDeclaration
     // 1.1 flatten params
+    auto params_ptr = n->children[3]->children[0];
+    if (_STR_EQ(params_ptr->name, "void")) {
+       node->params.clear();
+    } else if (_STR_EQ(params_ptr->name, "param-list")) {
+        std::stack<syntax_tree_node *> s;
+        while (params_ptr->children_num == 3) {
+          //std::cout<<"param: "<<params_ptr->children[2]->name<<std::endl;
+          s.push(params_ptr->children[2]);
+          params_ptr = params_ptr->children[0];
+        }
+        //std::cout<<"param: "<<params_ptr->children[0]->name<<std::endl;
+        s.push(params_ptr->children[0]);
+
+        while (!s.empty()) {
+          //std::cout<<"param-out: "<<s.top()->name<<std::endl;
+          auto child_node = static_cast<ASTParam *>(transform_node_iter(s.top()));
+          auto child_node_shared = std::shared_ptr<ASTParam>(child_node);
+          node->params.push_back(child_node_shared);
+          s.pop();
+        }
+    } else {
+        std::cerr << "[ast]: params transform failure!" << std::endl;
+        std::abort();
+    }
 
     // 1.2 compound_stmt 字段填充
+    auto compound_stmt_ptr = n->children[5];
+    auto child_node = static_cast<ASTCompoundStmt *>(transform_node_iter(compound_stmt_ptr));
+    auto child_node_shared = std::shared_ptr<ASTCompoundStmt>(child_node);
+    node->compound_stmt = child_node_shared;
 
     return node;
   } else if (_STR_EQ(n->name, "param")) {
@@ -132,9 +163,40 @@ ASTNode *AST::transform_node_iter(syntax_tree_node *n) {
     */
     // local declarations
     // 2.1 flatten local declarations
+    auto local_declaration_ptr = n->children[1];
+    if (local_declaration_ptr->children_num == 2) {
+      std::stack<syntax_tree_node *> s;
+      while (local_declaration_ptr->children_num == 2) {
+        //std::cout<<": "<<params_ptr->children[1]->name;
+        s.push(local_declaration_ptr->children[1]);
+        local_declaration_ptr = local_declaration_ptr->children[0];
+      }
+
+      while (!s.empty()) {
+        auto child_node = static_cast<ASTVarDeclaration *>(transform_node_iter(s.top()));
+        auto child_node_shared = std::shared_ptr<ASTVarDeclaration>(child_node);
+        node->local_declarations.push_back(child_node_shared);
+        s.pop();
+      }
+    }
 
     // statement list
     // 2.2 flatten statement-list
+    auto statement_list_ptr = n->children[2];
+    if (statement_list_ptr->children_num == 2) {
+      std::stack<syntax_tree_node *> s;
+      while (statement_list_ptr->children_num == 2) {
+        s.push(statement_list_ptr->children[1]);
+        statement_list_ptr = statement_list_ptr->children[0];
+      }
+
+      while (!s.empty()) {
+        auto child_node = static_cast<ASTStatement *>(transform_node_iter(s.top()));
+        auto child_node_shared = std::shared_ptr<ASTStatement>(child_node);
+        node->statement_list.push_back(child_node_shared);
+        s.pop();
+      }
+    }
 
     return node;
   } else if (_STR_EQ(n->name, "statement")) {
@@ -158,12 +220,20 @@ ASTNode *AST::transform_node_iter(syntax_tree_node *n) {
       expression, if_statement, else_statement
     */
     // 5.1 expresstion
-
+    auto expression_node = static_cast<ASTExpression *>(transform_node_iter(n->children[2]));
+    auto expression_node_ptr = std::shared_ptr<ASTExpression>(expression_node);
+    node->expression = expression_node_ptr;
     // 5.2 if statement
-
+    auto ifstatement_node = static_cast<ASTStatement *>(transform_node_iter(n->children[4]));
+    auto ifstatement_node_ptr = std::shared_ptr<ASTStatement>(ifstatement_node);
+    node->if_statement = ifstatement_node_ptr;
     // check whether this selection statement contains
     // 5.3 else structure
-
+    if (n->children_num > 5) {
+      auto elsestatement_node = static_cast<ASTStatement *>(transform_node_iter(n->children[6]));
+      auto elsestatement_node_ptr = std::shared_ptr<ASTStatement>(elsestatement_node);
+      node->else_statement = elsestatement_node_ptr;
+    }
     return node;
   } else if (_STR_EQ(n->name, "iteration-stmt")) {
     auto node = new ASTIterationStmt();
@@ -248,7 +318,16 @@ ASTNode *AST::transform_node_iter(syntax_tree_node *n) {
         additive-expression -> additive-expression addop term | term 
       */
       // additive_expression, term, op
-
+      auto additive_expression_node = static_cast<ASTAdditiveExpression *>(transform_node_iter(n->children[0]));
+      node->additive_expression = std::shared_ptr<ASTAdditiveExpression>(additive_expression_node);
+      auto addop_name = n->children[1]->children[0]->name;
+      if(_STR_EQ(addop_name, "+")){
+        node->op = OP_PLUS;
+      } else if (_STR_EQ(addop_name, "-")){
+        node->op = OP_MINUS;
+      }
+      auto term_node = static_cast<ASTTerm *>(transform_node_iter(n->children[2]));
+      node->term = std::shared_ptr<ASTTerm>(term_node);
     } else {
       auto term_node =
           static_cast<ASTTerm *>(transform_node_iter(n->children[0]));
@@ -296,10 +375,12 @@ ASTNode *AST::transform_node_iter(syntax_tree_node *n) {
       */
       if (_STR_EQ(name, "integer")) {
         // 3.1
-
+        num_node->type = TYPE_INT;
+        num_node->i_val = std::stoi(n->children[i]->children[0]->name);
       } else if (_STR_EQ(name, "float")) {
         // 3.2
-
+        num_node->type = TYPE_FLOAT;
+        num_node->f_val = std::stof(n->children[i]->children[0]->name);
       } else {
         _AST_NODE_ERROR_
       }

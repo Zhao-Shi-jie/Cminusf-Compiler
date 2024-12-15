@@ -8,9 +8,9 @@
             "name": "C++ Launch (GDB)",
             "type": "cppdbg",
             "request": "launch",
-            "program": "${workspaceFolder}/build/parser",  // 替换为您的可执行文件路径
+            "program": "${workspaceFolder}/build/cminusfc",  // 可执行文件路径
             "args": [
-                "${workspaceFolder}/tests/1-parser/input/normal/ifcopy.cminus"
+                "${workspaceFolder}/tests/1-parser/input/normal/func.cminus"
             ],
             "stopAtEntry": false,
             "cwd": "${workspaceFolder}",
@@ -24,8 +24,8 @@
                     "ignoreFailures": true
                 }
             ],
-            "preLaunchTask": "",  // 替换为您的构建任务名称
-            "miDebuggerPath": "/usr/bin/gdb"  // 替换为您的 GDB 路径
+            "preLaunchTask": "",  // 构建任务名称
+            "miDebuggerPath": "/usr/bin/gdb"  // GDB 路径
         }
     ]
 }
