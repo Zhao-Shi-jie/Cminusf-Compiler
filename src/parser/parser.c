@@ -1,6 +1,7 @@
 #include "syntax_tree.h"
 extern syntax_tree *parse(const char *);
 
+
 int main(int argc, char *argv[]) {
     syntax_tree *tree = NULL;
     const char *input = NULL;
@@ -12,6 +13,7 @@ int main(int argc, char *argv[]) {
         return 1;
     }
 
+    // yydebug = 1;
     // Call the syntax analyzer.
     tree = parse(input);
     print_syntax_tree(stdout, tree);
