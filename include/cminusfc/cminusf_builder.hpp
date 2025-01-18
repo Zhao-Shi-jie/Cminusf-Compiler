@@ -4,8 +4,10 @@
 #include "Constant.hpp"
 #include "Function.hpp"
 #include "IRBuilder.hpp"
+#include "Instruction.hpp"
 #include "Module.hpp"
 #include "Type.hpp"
+#include "Value.hpp"
 #include "ast.hpp"
 
 #include <map>
@@ -109,5 +111,15 @@ class CminusfBuilder : public ASTVisitor {
         // function that is being built
         Function *func = nullptr;
         // TODO: you should add more fields to store state
+        BasicBlock *bb = nullptr;
+        std::map<std::string, Value *> variables;
+
+        BasicBlock *loopStartBB = nullptr;
+        BasicBlock *loopEndBB = nullptr;
+
+        Value *retVal = nullptr;
+
+        Type *numType = nullptr;
+        int Integer = 0;
     } context;
 };

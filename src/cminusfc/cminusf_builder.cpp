@@ -1,4 +1,14 @@
 #include "cminusf_builder.hpp"
+#include "Constant.hpp"
+#include "GlobalVariable.hpp"
+#include "Type.hpp"
+#include "Value.hpp"
+#include "ast.hpp"
+#include <cassert>
+#include <cstddef>
+#include <memory>
+#include <string>
+#include <vector>
 
 #define CONST_FP(num) ConstantFP::get((float)num, module.get())
 #define CONST_INT(num) ConstantInt::get(num, module.get())
@@ -35,21 +45,67 @@ Value* CminusfBuilder::visit(ASTProgram &node) {
 }
 
 Value* CminusfBuilder::visit(ASTNum &node) {
-    // TODO: This function is empty now.
-    // Add some code here.
-    return nullptr;
+    Value *num_val;
+    context.numType = nullptr;
+    if (node.type == TYPE_INT) {
+        context.numType = INT32_T;
+        context.Integer = node.i_val;
+        num_val = CONST_INT(node.i_val);
+    } else if (node.type == TYPE_FLOAT) {
+        context.numType = FLOAT_T;
+        num_val = CONST_FP(node.f_val);
+    } else {
+        assert(false && "Unknown type in ASTNum");
+        return nullptr;
+    }
+    return num_val;
 }
 
 Value* CminusfBuilder::visit(ASTVarDeclaration &node) {
-    // TODO: This function is empty now.
-    // Add some code here.
-    return nullptr;
+    Type *var_type = nullptr;
+    if (node.type == TYPE_INT) {
+        var_type = INT32_T;
+    } else if (node.type == TYPE_FLOAT) {
+        var_type = FLOAT_T;
+    }
+
+    if (scope.in_global()) {
+        auto init = ConstantZero::get(INT32_T, builder->get_module());
+        if (node.num == nullptr) {
+            auto *varAlloca = (var_type != nullptr) ? GlobalVariable::create(node.id, 
+                                builder->get_module(), var_type, false, init)
+                                : nullptr;
+        } else {
+            if (context.numType == FLOAT_T || context.Integer <= 0) {
+                builder->create_call(scope.find("neg_idx_except"), std::vector<Value *> {});
+                auto arrayType = ArrayType::get(var_type, context.Integer);
+                auto arrayAlloca = GlobalVariable::create(node.id, builder->get_module(), 
+                                                                            arrayType, false, init);
+                scope
+            }
+        }
+    } else {
+        if (node.num == nullptr) {
+            auto *varAlloca = (var_type != nullptr) ? builder->create_alloca(var_type) : nullptr;
+        } else {
+            
+        }
+    }
+    Value *varAlloca = builder->create_alloca(var_type);
+    if (node.num) {
+        Value *var_val = node.num->accept(*this);
+        builder->create_store(var_val, varAlloca);
+    }
+    
+    scope.push(var_name, varAlloca);
+    return varAlloca;
 }
 
 Value* CminusfBuilder::visit(ASTFunDeclaration &node) {
     FunctionType *fun_type;
     Type *ret_type;
     std::vector<Type *> param_types;
+    std::vector<Value *> params;
     if (node.type == TYPE_INT)
         ret_type = INT32_T;
     else if (node.type == TYPE_FLOAT)
@@ -59,6 +115,9 @@ Value* CminusfBuilder::visit(ASTFunDeclaration &node) {
 
     for (auto &param : node.params) {
         // TODO: Please accomplish param_types.
+        Value *tmp = param->accept(*this);
+        params.push_back(tmp);
+        param_types.push_back(tmp->get_type());
     }
 
     fun_type = FunctionType::get(ret_type, param_types);
@@ -74,6 +133,8 @@ Value* CminusfBuilder::visit(ASTFunDeclaration &node) {
     }
     for (unsigned int i = 0; i < node.params.size(); ++i) {
         // TODO: You need to deal with params and store them in the scope.
+        builder->create_store(args[i], params[i]);
+        scope.push(node.params[i]->id, params[i]);
     }
     node.compound_stmt->accept(*this);
     if (not builder->get_insert_block()->is_terminated()) 
@@ -90,16 +151,21 @@ Value* CminusfBuilder::visit(ASTFunDeclaration &node) {
 }
 
 Value* CminusfBuilder::visit(ASTParam &node) {
-    // TODO: This function is empty now.
-    // Add some code here.
-    return nullptr;
+    std::string param_name = node.id;
+    Type *param_type = (node.type == TYPE_INT) ? INT32_T : FLOAT_T;
+    if (node.isarray) {
+        param_type = PointerType::get(param_type);
+    }
+    Value *paramAlloca = builder->create_alloca(param_type);
+    //scope.push(param_name, paramAlloca);
+    return paramAlloca;
 }
 
 Value* CminusfBuilder::visit(ASTCompoundStmt &node) {
     // TODO: This function is not complete.
     // You may need to add some code here
     // to deal with complex statements. 
-    
+    scope.enter();
     for (auto &decl : node.local_declarations) {
         decl->accept(*this);
     }
@@ -109,12 +175,16 @@ Value* CminusfBuilder::visit(ASTCompoundStmt &node) {
         if (builder->get_insert_block()->is_terminated())
             break;
     }
+    scope.exit();
     return nullptr;
 }
 
 Value* CminusfBuilder::visit(ASTExpressionStmt &node) {
-    // TODO: This function is empty now.
-    // Add some code here.
+    scope.enter();
+    if (node.expression) {
+        node.expression->accept(*this);
+    }
+    scope.exit();
     return nullptr;
 }
 
@@ -142,14 +212,15 @@ Value* CminusfBuilder::visit(ASTReturnStmt &node) {
 }
 
 Value* CminusfBuilder::visit(ASTVar &node) {
-    // TODO: This function is empty now.
-    // Add some code here.
+    node.
     return nullptr;
 }
 
 Value* CminusfBuilder::visit(ASTAssignExpression &node) {
     // TODO: This function is empty now.
     // Add some code here.
+    node.var->accept(*this);
+
     return nullptr;
 }
 
