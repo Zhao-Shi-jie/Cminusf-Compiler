@@ -75,30 +75,32 @@ Value* CminusfBuilder::visit(ASTVarDeclaration &node) {
             auto *varAlloca = (var_type != nullptr) ? GlobalVariable::create(node.id, 
                                 builder->get_module(), var_type, false, init)
                                 : nullptr;
+            scope.push(node.id, varAlloca);
         } else {
+            node.num->accept(*this);
             if (context.numType == FLOAT_T || context.Integer <= 0) {
-                builder->create_call(scope.find("neg_idx_except"), std::vector<Value *> {});
-                auto arrayType = ArrayType::get(var_type, context.Integer);
-                auto arrayAlloca = GlobalVariable::create(node.id, builder->get_module(), 
-                                                                            arrayType, false, init);
-                scope
+                builder->create_call(scope.find("neg_idx_except"), std::vector<Value *> {});  
             }
+            auto arrayType = ArrayType::get(var_type, context.Integer);
+            auto arrayAlloca = GlobalVariable::create(node.id, builder->get_module(), 
+                                                                            arrayType, false, init);
+            scope.push(node.id, arrayAlloca);
         }
     } else {
         if (node.num == nullptr) {
             auto *varAlloca = (var_type != nullptr) ? builder->create_alloca(var_type) : nullptr;
+            scope.push(node.id, varAlloca);
         } else {
-            
+            node.num->accept(*this);
+            if (context.numType == FLOAT_T || context.Integer <= 0) {
+                builder->create_call(scope.find("neg_idx_except"), std::vector<Value *> {});  
+            }
+            auto arrayType = ArrayType::get(var_type, context.Integer);
+            auto arrayAlloca = builder->create_alloca(arrayType);
+            scope.push(node.id, arrayAlloca);
         }
     }
-    Value *varAlloca = builder->create_alloca(var_type);
-    if (node.num) {
-        Value *var_val = node.num->accept(*this);
-        builder->create_store(var_val, varAlloca);
-    }
-    
-    scope.push(var_name, varAlloca);
-    return varAlloca;
+    return nullptr;
 }
 
 Value* CminusfBuilder::visit(ASTFunDeclaration &node) {
