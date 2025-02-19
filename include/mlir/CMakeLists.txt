@@ -1,0 +1,6 @@
+set(LLVM_TARGET_DEFINITIONS Ops.td)
+mlir_tablegen(CminusfOps.h.inc -gen-op-decls)
+mlir_tablegen(CminusfOps.cpp.inc -gen-op-defs)
+mlir_tablegen(CminusfDialect.h.inc -gen-dialect-decls)
+mlir_tablegen(CminusfDialect.cpp.inc -gen-dialect-defs)
+add_public_tablegen_target(OpsIncGen)
