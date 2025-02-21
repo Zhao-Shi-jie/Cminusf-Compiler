@@ -1,4 +1,4 @@
-#include "ast/AST.h"
+#include "ast.hpp"
 #include "mlir/Dialect.h"
 #include "mlir/IR/Builders.h"
 #include "mlir/IR/BuiltinOps.h"
@@ -112,7 +112,7 @@ class MLIRGenImpl {
         builder.create<Cminusf_ReturnOp>(builder.getUnknownLoc(), retValue);
     }
 
-    Value mlirGenExpression(ASTExpression *expr) {
+    mlir::Value mlirGenExpression(ASTExpression *expr) {
         if (auto *assignExpr = dynamic_cast<ASTAssignExpression *>(expr)) {
             return mlirGenAssignExpression(assignExpr);
         } else if (auto *simpleExpr = dynamic_cast<ASTSimpleExpression *>(expr)) {
@@ -131,34 +131,34 @@ class MLIRGenImpl {
         return nullptr;
     }
 
-    Value mlirGenAssignExpression(ASTAssignExpression *assignExpr) {
+    mlir::Value mlirGenAssignExpression(ASTAssignExpression *assignExpr) {
         auto lhs = mlirGenVar(assignExpr->var.get());
         auto rhs = mlirGenExpression(assignExpr->expression.get());
         return builder.create<Cminusf_AssignOp>(builder.getUnknownLoc(), lhs, rhs);
     }
 
-    Value mlirGenSimpleExpression(ASTSimpleExpression *simpleExpr) {
+    mlir::Value mlirGenSimpleExpression(ASTSimpleExpression *simpleExpr) {
         auto lhs = mlirGenExpression(simpleExpr->additive_expression_l.get());
         auto rhs = mlirGenExpression(simpleExpr->additive_expression_r.get());
         return builder.create<Cminusf_SimpleOp>(builder.getUnknownLoc(), lhs, rhs,
                                                 static_cast<int32_t>(simpleExpr->op));
     }
 
-    Value mlirGenAdditiveExpression(ASTAdditiveExpression *addExpr) {
+    mlir::Value mlirGenAdditiveExpression(ASTAdditiveExpression *addExpr) {
         auto lhs = mlirGenExpression(addExpr->additive_expression.get());
         auto rhs = mlirGenExpression(addExpr->term.get());
         return builder.create<Cminusf_AdditiveOp>(builder.getUnknownLoc(), lhs, rhs,
                                                   static_cast<int32_t>(addExpr->op));
     }
 
-    Value mlirGenTerm(ASTTerm *term) {
+    mlir::Value mlirGenTerm(ASTTerm *term) {
         auto lhs = mlirGenExpression(term->term.get());
         auto rhs = mlirGenExpression(term->factor.get());
         return builder.create<Cminusf_TermOp>(builder.getUnknownLoc(), lhs, rhs,
                                               static_cast<int32_t>(term->op));
     }
 
-    Value mlirGenCall(ASTCall *call) {
+    mlir::Value mlirGenCall(ASTCall *call) {
         SmallVector<Value, 4> args;
         for (auto &arg : call->args) {
             args.push_back(mlirGenExpression(arg.get()));
@@ -166,14 +166,14 @@ class MLIRGenImpl {
         return builder.create<Cminusf_CallOp>(builder.getUnknownLoc(), call->id, args);
     }
 
-    Value mlirGenVar(ASTVar *var) {
+    mlir::Value mlirGenVar(ASTVar *var) {
         // Assume variables are already declared and can be looked up by name
         // You might need a symbol table or context to look up variables
         // For now, we return a dummy value
         return builder.create<Cminusf_ConstantOp>(builder.getUnknownLoc(), 0);
     }
 
-    Value mlirGenNum(ASTNum *num) {
+    mlir::Value mlirGenNum(ASTNum *num) {
         if (num->type == TYPE_INT) {
             return builder.create<Cminusf_ConstantOp>(builder.getUnknownLoc(), num->i_val);
         } else {
@@ -183,7 +183,7 @@ class MLIRGenImpl {
         }
     }
 
-    Type getType(CminusType type) {
+    mlir::Type getType(CminusType type) {
         switch (type) {
         case TYPE_INT:
             return builder.getIntegerType(32);

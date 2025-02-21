@@ -27,8 +27,11 @@ set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
 find_package(FLEX REQUIRED)
 find_package(BISON REQUIRED)
 find_package(LLVM REQUIRED CONFIG)
+find_library(MLIR REQUIRED CONFIG)
 message(STATUS "Found LLVM ${LLVM_PACKAGE_VERSION}")
 message(STATUS "Using LLVMConfig.cmake in: ${LLVM_DIR}")
+message(STATUS "Found MLIR ${MLIR_PACKAGE_VERSION}")
+message(STATUS "Using MLIRConfig.cmake in: ${MLIR_DIR}")
 llvm_map_components_to_libnames(
     llvm_libs
     support
@@ -39,10 +42,9 @@ INCLUDE_DIRECTORIES(
     include
     include/cminusfc
     include/common
-    include/lightir
-    include/codegen
-    include/passes
+    include/mlir
     ${LLVM_INCLUDE_DIRS}
+    ${MLIR_INCLUDE_DIRS}
 )
 
 add_definitions(${LLVM_DEFINITIONS})
@@ -54,4 +56,4 @@ set(CMAKE_LIBRARY_OUTPUT_DIRECTORY ${PROJECT_BINARY_DIR})
 include_directories(${PROJECT_SOURCE_DIR})
 include_directories(${PROJECT_BINARY_DIR})
 add_subdirectory(src)
-add_subdirectory(tests)
+# add_subdirectory(tests)

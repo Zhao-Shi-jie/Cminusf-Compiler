@@ -1,17 +1,14 @@
 add_executable(
     cminusfc
     main.cpp
-    cminusf_builder.cpp
 )
 
 target_link_libraries(
     cminusfc
-    IR_lib
+    mlir              # 使用新的 MLIR 库
     common
-    codegen
     syntax
     stdc++fs
-    passes
 )
 
 install(
