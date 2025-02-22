@@ -9,9 +9,6 @@
 #ifndef CMINUSF_OPS
 #define CMINUSF_OPS
 
-include "mlir/IR/DialectDefinition.td"
-include "mlir/IR/OpBase.td"
-include "mlir/Interfaces/SideEffectInterfaces.td"
 include "mlir/IR/OpBase.td"
 include "mlir/IR/FunctionInterfaces.td"
 include "mlir/IR/SymbolInterfaces.td"
@@ -31,14 +28,14 @@ class Cminusf_Op<string mnemonic, list<Trait> traits = []> :
 // ConstantOp
 //===----------------------------------------------------------------------===//
 
-def Cminusf_ConstantOp : Cminusf_Op<"constant", [NoSideEffect]> {
+def Cminusf_ConstantOp : Cminusf_Op<"constant", [Pure]> {
   let summary = "constant integer operation";
   let description = [{
     生成一个常量整数值。
   }];
 
   let arguments = (ins I32Attr:$value);
-  let results = (outs I32Type:$res);
+  let results = (outs I32:$res);
 
   let assemblyFormat = "`" value `:` type($res);
 }
@@ -47,13 +44,13 @@ def Cminusf_ConstantOp : Cminusf_Op<"constant", [NoSideEffect]> {
 // VarDeclarationOp
 //===----------------------------------------------------------------------===//
 
-def Cminusf_VarDeclarationOp : Cminusf_Op<"vardecl", [NoSideEffect]> {
+def Cminusf_VarDeclarationOp : Cminusf_Op<"vardecl", [Pure]> {
   let summary = "variable declaration";
   let description = [{
     声明一个变量。
   }];
 
-  let arguments = (ins I32Type:$type, StrAttr:$name, Optional<I32Attr>:$size);
+  let arguments = (ins I32:$type, StrAttr:$name, Optional<I32Attr>:$size);
   let results = (outs );
   let assemblyFormat = "`" type ` ` name (`[` size `]`)? ;
 }
@@ -81,13 +78,13 @@ def Cminusf_FunDeclarationOp : Cminusf_Op<"fundecl", [Symbol]> {
 // ParamOp
 //===----------------------------------------------------------------------===//
 
-def Cminusf_ParamOp : Cminusf_Op<"param", [NoSideEffect]> {
+def Cminusf_ParamOp : Cminusf_Op<"param", [Pure]> {
   let summary = "function parameter";
   let description = [{
     声明一个函数参数。
   }];
 
-  let arguments = (ins I32Type:$type, StrAttr:$name, BoolAttr:$isarray);
+  let arguments = (ins I32:$type, StrAttr:$name, BoolAttr:$isarray);
   let results = (outs );
   let assemblyFormat = "`" type ` ` name (`[` `]`)? ;
 }
@@ -96,7 +93,7 @@ def Cminusf_ParamOp : Cminusf_Op<"param", [NoSideEffect]> {
 // CompoundStmtOp
 //===----------------------------------------------------------------------===//
 
-def Cminusf_CompoundStmtOp : Cminusf_Op<"compound", [NoSideEffect]> {
+def Cminusf_CompoundStmtOp : Cminusf_Op<"compound", [Pure]> {
   let summary = "compound statement";
   let description = [{
     表示一个复合语句块。
@@ -112,7 +109,7 @@ def Cminusf_CompoundStmtOp : Cminusf_Op<"compound", [NoSideEffect]> {
 // ExpressionStmtOp
 //===----------------------------------------------------------------------===//
 
-def Cminusf_ExpressionStmtOp : Cminusf_Op<"exprstmt", [NoSideEffect]> {
+def Cminusf_ExpressionStmtOp : Cminusf_Op<"exprstmt", [Pure]> {
   let summary = "expression statement";
   let description = [{
     表示一个表达式语句。
@@ -127,7 +124,7 @@ def Cminusf_ExpressionStmtOp : Cminusf_Op<"exprstmt", [NoSideEffect]> {
 // SelectionStmtOp
 //===----------------------------------------------------------------------===//
 
-def Cminusf_SelectionStmtOp : Cminusf_Op<"if", [NoSideEffect]> {
+def Cminusf_SelectionStmtOp : Cminusf_Op<"if", [Pure]> {
   let summary = "if statement";
   let description = [{
     表示一个选择语句（if-else）。
@@ -142,7 +139,7 @@ def Cminusf_SelectionStmtOp : Cminusf_Op<"if", [NoSideEffect]> {
 // IterationStmtOp
 //===----------------------------------------------------------------------===//
 
-def Cminusf_IterationStmtOp : Cminusf_Op<"while", [NoSideEffect]> {
+def Cminusf_IterationStmtOp : Cminusf_Op<"while", [Pure]> {
   let summary = "while statement";
   let description = [{
     表示一个迭代语句（while）。
@@ -173,7 +170,7 @@ def Cminusf_ReturnOp : Cminusf_Op<"return", [Terminator]> {
 // AssignOp
 //===----------------------------------------------------------------------===//
 
-def Cminusf_AssignOp : Cminusf_Op<"assign", [NoSideEffect]> {
+def Cminusf_AssignOp : Cminusf_Op<"assign", [Pure]> {
   let summary = "assignment operation";
   let description = [{
     表示一个赋值操作。
@@ -188,7 +185,7 @@ def Cminusf_AssignOp : Cminusf_Op<"assign", [NoSideEffect]> {
 // SimpleOp
 //===----------------------------------------------------------------------===//
 
-def Cminusf_SimpleOp : Cminusf_Op<"simple", [NoSideEffect]> {
+def Cminusf_SimpleOp : Cminusf_Op<"simple", [Pure]> {
   let summary = "simple expression";
   let description = [{
     表示一个简单表达式，带有关系运算符。
@@ -203,7 +200,7 @@ def Cminusf_SimpleOp : Cminusf_Op<"simple", [NoSideEffect]> {
 // AdditiveOp
 //===----------------------------------------------------------------------===//
 
-def Cminusf_AdditiveOp : Cminusf_Op<"additive", [NoSideEffect]> {
+def Cminusf_AdditiveOp : Cminusf_Op<"additive", [Pure]> {
   let summary = "additive expression";
   let description = [{
     表示一个加法表达式，带有加法运算符。
@@ -218,7 +215,7 @@ def Cminusf_AdditiveOp : Cminusf_Op<"additive", [NoSideEffect]> {
 // TermOp
 //===----------------------------------------------------------------------===//
 
-def Cminusf_TermOp : Cminusf_Op<"term", [NoSideEffect]> {
+def Cminusf_TermOp : Cminusf_Op<"term", [Pure]> {
   let summary = "term expression";
   let description = [{
     表示一个项，带有乘法运算符。
@@ -233,7 +230,7 @@ def Cminusf_TermOp : Cminusf_Op<"term", [NoSideEffect]> {
 // CallOp
 //===----------------------------------------------------------------------===//
 
-def Cminusf_CallOp : Cminusf_Op<"call", [NoSideEffect]> {
+def Cminusf_CallOp : Cminusf_Op<"call", [Pure]> {
   let summary = "function call";
   let description = [{
     表示一个函数调用。

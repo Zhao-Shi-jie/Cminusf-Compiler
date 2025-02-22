@@ -5,7 +5,7 @@ add_library(mlir
     Dialect.cpp
     MLIRGen.cpp
 )
-
+add_dependencies(mlir OpsIncGen)
 # 将 mlir 库链接到 LLVM 和 MLIR 库
 target_link_libraries(mlir
     LLVM

@@ -39,6 +39,8 @@ message(STATUS "Found LLVM ${LLVM_PACKAGE_VERSION}")
 message(STATUS "Using LLVMConfig.cmake in: ${LLVM_DIR}")
 message(STATUS "Found MLIR ${MLIR_PACKAGE_VERSION}")
 message(STATUS "Using MLIRConfig.cmake in: ${MLIR_DIR}")
+message(STATUS "LLVM Include Dirs: ${LLVM_INCLUDE_DIRS}")
+message(STATUS "MLIR Include Dirs: ${MLIR_INCLUDE_DIRS}")
 
 include(AddLLVM)
 include(AddMLIR)
@@ -50,14 +52,15 @@ llvm_map_components_to_libnames(
     support
     core
 )
-
+include_directories(
+  ${LLVM_INCLUDE_DIRS}
+  ${MLIR_INCLUDE_DIRS}
+)
 INCLUDE_DIRECTORIES(
     include
     include/cminusfc
     include/common
     include/mlir
-    ${LLVM_INCLUDE_DIRS}
-    ${MLIR_INCLUDE_DIRS}
     ${CMAKE_CURRENT_BINARY_DIR}/include/
 )
 
