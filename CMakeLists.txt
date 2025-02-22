@@ -26,12 +26,25 @@ set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
 
 find_package(FLEX REQUIRED)
 find_package(BISON REQUIRED)
+set(CMAKE_INSTALL_PREFIX "/data/home/zsj/MLIR-Related/llvm-project/build/default-install" CACHE PATH "Installation directory" FORCE)
+set(MLIR_DIR "~/MLIR-Related/llvm-project/build/default/lib/cmake/mlir" CACHE PATH "Path to MLIR cmake files")
+set(LLVM_DIR "~/MLIR-Related/llvm-project/build/default/lib/cmake/llvm" CACHE PATH "Path to LLVM cmake files")
 find_package(LLVM REQUIRED CONFIG)
-find_library(MLIR REQUIRED CONFIG)
+find_package(MLIR REQUIRED CONFIG)
+list(APPEND CMAKE_MODULE_PATH "${MLIR_CMAKE_DIR}")
+list(APPEND CMAKE_MODULE_PATH "${LLVM_CMAKE_DIR}")
+message(STATUS "Using LLVMConfig.cmake in: ${LLVM_CMAKE_DIR}")
+message(STATUS "Using MLIRConfig.cmake in: ${MLIR_CMAKE_DIR}")
 message(STATUS "Found LLVM ${LLVM_PACKAGE_VERSION}")
 message(STATUS "Using LLVMConfig.cmake in: ${LLVM_DIR}")
 message(STATUS "Found MLIR ${MLIR_PACKAGE_VERSION}")
 message(STATUS "Using MLIRConfig.cmake in: ${MLIR_DIR}")
+
+include(AddLLVM)
+include(AddMLIR)
+include(TableGen)
+include(HandleLLVMOptions)
+
 llvm_map_components_to_libnames(
     llvm_libs
     support
@@ -45,9 +58,11 @@ INCLUDE_DIRECTORIES(
     include/mlir
     ${LLVM_INCLUDE_DIRS}
     ${MLIR_INCLUDE_DIRS}
+    ${CMAKE_CURRENT_BINARY_DIR}/include/
 )
 
 add_definitions(${LLVM_DEFINITIONS})
+add_definitions(${MLIR_DEFINITIONS})
 
 set(CMAKE_RUNTIME_OUTPUT_DIRECTORY ${PROJECT_BINARY_DIR})
 set(CMAKE_ARCHIVE_OUTPUT_DIRECTORY ${PROJECT_BINARY_DIR})
@@ -55,5 +70,7 @@ set(CMAKE_LIBRARY_OUTPUT_DIRECTORY ${PROJECT_BINARY_DIR})
 
 include_directories(${PROJECT_SOURCE_DIR})
 include_directories(${PROJECT_BINARY_DIR})
+
+add_subdirectory(include)
 add_subdirectory(src)
 # add_subdirectory(tests)

@@ -1,5 +1,5 @@
+#include "Dialect.h"
 #include "ast.hpp"
-#include "mlir/Dialect.h"
 #include "mlir/IR/Builders.h"
 #include "mlir/IR/BuiltinOps.h"
 #include "mlir/IR/MLIRContext.h"

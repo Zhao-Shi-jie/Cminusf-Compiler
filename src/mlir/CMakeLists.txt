@@ -1,3 +1,5 @@
+
+
 # 创建 mlir 库，包含 Dialect.cpp 和 MLIRGen.cpp
 add_library(mlir
     Dialect.cpp
@@ -18,9 +20,6 @@ target_include_directories(mlir PUBLIC
     ${LLVM_INCLUDE_DIRS}
     ${MLIR_INCLUDE_DIRS}
 )
-
-# 如果需要 TableGen 目标
-add_public_tablegen_target(OpsIncGen)
 
 # 安装配置
 install(
