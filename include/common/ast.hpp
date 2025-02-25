@@ -65,8 +65,6 @@ struct ASTAdditiveExpression;
 struct ASTTerm;
 struct ASTCall;
 
-class ASTVisitor;
-
 class AST {
   public:
     AST() = delete;
@@ -76,7 +74,6 @@ class AST {
         tree.root = nullptr;
     };
     ASTProgram *get_root() { return root.get(); }
-    void run_visitor(ASTVisitor &visitor);
 
   private:
     ASTNode *transform_node_iter(syntax_tree_node *);

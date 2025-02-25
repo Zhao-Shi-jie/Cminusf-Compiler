@@ -1,9 +1,3 @@
-//===- Cminusf.h - Cminusf dialect and ops definition -----------*- C++ -*-===//
-//
-// This file declares the dialect and operations for a simplified Cminusf grammar example.
-//
-//===----------------------------------------------------------------------===//
-
 #ifndef MLIR_DIALECT_CMINUSF_H_
 #define MLIR_DIALECT_CMINUSF_H_
 
@@ -14,7 +8,7 @@
 #include "mlir/Interfaces/CallInterfaces.h"
 #include "mlir/Interfaces/SideEffectInterfaces.h"
 
-#include "CminusfDialect.h.inc"
+#include "mlir/CminusfDialect.h.inc"
 
 #define GET_OP_CLASSES
 #include "mlir/CminusfOps.h.inc"

@@ -1,6 +1,3 @@
-
-
-# 创建 mlir 库，包含 Dialect.cpp 和 MLIRGen.cpp
 add_library(mlir
     Dialect.cpp
     MLIRGen.cpp
@@ -16,7 +13,6 @@ target_link_libraries(mlir
 # 包含 MLIR 头文件
 target_include_directories(mlir PUBLIC
     ${PROJECT_SOURCE_DIR}/include/mlir
-    ${CMAKE_CURRENT_BINARY_DIR}/include/mlir
     ${LLVM_INCLUDE_DIRS}
     ${MLIR_INCLUDE_DIRS}
 )

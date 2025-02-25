@@ -3,6 +3,8 @@ add_executable(
     main.cpp
 )
 
+add_dependencies(cminusfc mlir)
+
 target_link_libraries(
     cminusfc
     mlir              # 使用新的 MLIR 库

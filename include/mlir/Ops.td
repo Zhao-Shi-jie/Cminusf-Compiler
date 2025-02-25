@@ -1,242 +1,196 @@
-//===- Cminusf.td - TableGen definitions for Cminusf Dialect and Ops -----------------*- tablegen -*-===//
-//
-// This file defines the Cminusf dialect and operations in MLIR.
-// It combines the dialect definition and the operation definitions
-// into a single TableGen file.
-//
-//===-----------------------------------------------------------------------------------------------===//
-
-#ifndef CMINUSF_OPS
-#define CMINUSF_OPS
-
 include "mlir/IR/OpBase.td"
 include "mlir/IR/FunctionInterfaces.td"
 include "mlir/IR/SymbolInterfaces.td"
 include "mlir/Interfaces/SideEffectInterfaces.td"
 
-// 定义一个名为 "cminusf" 的 Dialect，前缀同为 "cminusf"
 def Cminusf_Dialect : Dialect {
   let name = "cminusf";
   let cppNamespace = "mlir::cminusf";
 }
 
-// 定义一个 Cminusf_Op 基类，用于简化操作定义
 class Cminusf_Op<string mnemonic, list<Trait> traits = []> :
     Op<Cminusf_Dialect, mnemonic, traits>;
 
-///===----------------------------------------------------------------------===//
-// ConstantOp
-//===----------------------------------------------------------------------===//
-
+// 统一的常量操作，支持整数和浮点类型
 def Cminusf_ConstantOp : Cminusf_Op<"constant", [Pure]> {
-  let summary = "constant integer operation";
+  let summary = "Constant value operation";
   let description = [{
-    生成一个常量整数值。
+    Represents a constant value that can be either integer or floating-point.
+    
+    该操作通过类型属性自动推导结果类型，支持：
+    - 整数常量 (i32)
+    - 浮点常量 (f32)
   }];
 
-  let arguments = (ins I32Attr:$value);
-  let results = (outs I32:$res);
+  // 使用单一属性存储常量值
+  let arguments = (ins
+    AnyAttrOf<[F32Attr, I32Attr]>:$value  // 携带类型和值的属性
+  );
 
-  let assemblyFormat = "`" value `:` type($res);
+  let results = (outs
+    AnyTypeOf<[F32, I32]>:$result   // 自动推导的结果类型
+  );
+
+  // 自动类型推导：结果类型取自属性类型
+  let builders = [
+    OpBuilder<(ins "Attribute":$value), [{
+      auto type = value.getType();
+      $_state.addTypes(type);
+    }]>
+  ];
+
+  let hasVerifier = 1;
 }
 
-//===----------------------------------------------------------------------===//
-// VarDeclarationOp
-//===----------------------------------------------------------------------===//
 
-def Cminusf_VarDeclarationOp : Cminusf_Op<"vardecl", [Pure]> {
-  let summary = "variable declaration";
+/// 变量声明
+def Cminusf_VarDeclOp : Cminusf_Op<"var_decl", [Pure]> {
+  let summary = "Variable declaration";
   let description = [{
-    声明一个变量。
+    Declares a variable with a given name and type.
+  }];
+  
+  let arguments = (ins StrAttr:$var_name, AnyTypeOf<[F32, I32]>:$var_type);
+  let results = (outs AnyTypeOf<[F32, I32]>:$result);
+}
+
+/// 函数声明
+def Cminusf_FunDeclOp : Cminusf_Op<"fun_decl", [Symbol]> {
+  let summary = "Function declaration";
+  let description = [{
+    Declares a function with a name, return type, and parameters.
   }];
 
-  let arguments = (ins I32:$type, StrAttr:$name, Optional<I32Attr>:$size);
-  let results = (outs );
-  let assemblyFormat = "`" type ` ` name (`[` size `]`)? ;
+  let arguments = (ins
+    SymbolNameAttr:$sym_name,
+    TypeAttrOf<FunctionType>:$function_type,
+    OptionalAttr<DictArrayAttr>:$arg_attrs,
+    OptionalAttr<DictArrayAttr>:$res_attrs
+  );
+  let regions = (region AnyRegion:$body);
 }
 
-//===----------------------------------------------------------------------===//
-// FunDeclarationOp
-//===----------------------------------------------------------------------===//
-
-def Cminusf_FunDeclarationOp : Cminusf_Op<"fundecl", [Symbol]> {
-  let summary = "function declaration";
-  let description = [{
-    声明一个函数。
-  }];
-
-  let regions = (region any "function body");
-  let traits = [IsolatedFromAbove];
-  let assemblyFormat = "`" symbol-name($name) `(` `)` attr-dict
-                       ":" type($function_type);
-
-  let arguments = (ins StrAttr:$name, TypeAttr:$function_type);
-  let results = (outs );
-}
-
-//===----------------------------------------------------------------------===//
-// ParamOp
-//===----------------------------------------------------------------------===//
-
-def Cminusf_ParamOp : Cminusf_Op<"param", [Pure]> {
-  let summary = "function parameter";
-  let description = [{
-    声明一个函数参数。
-  }];
-
-  let arguments = (ins I32:$type, StrAttr:$name, BoolAttr:$isarray);
-  let results = (outs );
-  let assemblyFormat = "`" type ` ` name (`[` `]`)? ;
-}
-
-//===----------------------------------------------------------------------===//
-// CompoundStmtOp
-//===----------------------------------------------------------------------===//
-
-def Cminusf_CompoundStmtOp : Cminusf_Op<"compound", [Pure]> {
-  let summary = "compound statement";
-  let description = [{
-    表示一个复合语句块。
-  }];
-
-  let regions = (region any "body");
-  let arguments = (ins );
-  let results = (outs );
-  let assemblyFormat = "`" attr-dict ;
-}
-
-//===----------------------------------------------------------------------===//
-// ExpressionStmtOp
-//===----------------------------------------------------------------------===//
-
-def Cminusf_ExpressionStmtOp : Cminusf_Op<"exprstmt", [Pure]> {
-  let summary = "expression statement";
-  let description = [{
-    表示一个表达式语句。
-  }];
-
-  let arguments = (ins AnyType:$expr);
-  let results = (outs );
-  let assemblyFormat = "`" expr ;
-}
-
-//===----------------------------------------------------------------------===//
-// SelectionStmtOp
-//===----------------------------------------------------------------------===//
-
-def Cminusf_SelectionStmtOp : Cminusf_Op<"if", [Pure]> {
-  let summary = "if statement";
-  let description = [{
-    表示一个选择语句（if-else）。
-  }];
-
-  let arguments = (ins AnyType:$cond, AnyType:$then, Optional<AnyType>:$else);
-  let results = (outs );
-  let assemblyFormat = "`" cond `:` then (`else` else)?;
-}
-
-//===----------------------------------------------------------------------===//
-// IterationStmtOp
-//===----------------------------------------------------------------------===//
-
-def Cminusf_IterationStmtOp : Cminusf_Op<"while", [Pure]> {
-  let summary = "while statement";
-  let description = [{
-    表示一个迭代语句（while）。
-  }];
-
-  let arguments = (ins AnyType:$cond, AnyType:$body);
-  let results = (outs );
-  let assemblyFormat = "`" cond `:` body ;
-}
-
-//===----------------------------------------------------------------------===//
-// ReturnStmtOp
-//===----------------------------------------------------------------------===//
-
-def Cminusf_ReturnOp : Cminusf_Op<"return", [Terminator]> {
-  let summary = "return statement";
-  let description = [{
-    返回一个可选值，如果是函数无返回则没有操作数。
-  }];
-
-  let arguments = (ins Optional<AnyType>:$value);
-  let results = (outs );
-  let assemblyFormat = "`" attr-dict ( $value^ `:` type($value))?
-                      ;
-}
-
-//===----------------------------------------------------------------------===//
-// AssignOp
-//===----------------------------------------------------------------------===//
-
+/// 赋值表达式 `var = expr`
 def Cminusf_AssignOp : Cminusf_Op<"assign", [Pure]> {
-  let summary = "assignment operation";
+  let summary = "Variable assignment operation";
   let description = [{
-    表示一个赋值操作。
+    将表达式的值赋给左值变量，要求变量和表达式类型严格匹配。
+    
+    示例：
+      %0 = "cminusf.assign"(%var, %expr) : (i32, i32) -> i32
   }];
 
-  let arguments = (ins AnyType:$lhs, AnyType:$rhs);
-  let results = (outs AnyType:$res);
-  let assemblyFormat = "`" lhs `=` rhs ;
+let arguments = (ins 
+    // `var` 是变量（左值），可以是 `i32` 或 `f32`
+    AnyTypeOf<[F32, I32]>:$var,
+    // `expr` 必须是 `var` 的相同类型
+    AnyTypeOf<[F32, I32]>:$expr
+  );
+
+  let results = (outs 
+    // 赋值操作的结果类型与变量类型一致
+    AnyTypeOf<[F32, I32]>:$result
+  );
+
+  // 自动类型推导构建器
+  let builders = [
+    OpBuilder<(ins "Value":$var, "Value":$expr), [{
+      auto varType = var.getType();
+      auto exprType = expr.getType();
+
+      // 确保变量类型和表达式类型匹配
+      if (varType != exprType) {
+        emitError("变量类型 ") << varType 
+             << " 与表达式类型 " << exprType << " 不匹配";
+      }
+
+      // 结果类型与变量类型一致
+      $_state.addTypes(varType);
+      $_state.addOperands({var, expr});
+    }]>
+  ];
 }
 
-//===----------------------------------------------------------------------===//
-// SimpleOp
-//===----------------------------------------------------------------------===//
-
-def Cminusf_SimpleOp : Cminusf_Op<"simple", [Pure]> {
-  let summary = "simple expression";
+/// 比较运算
+def Cminusf_CmpOp : Cminusf_Op<"cmp", [Pure]> {
+  let summary = "Comparison operation";
   let description = [{
-    表示一个简单表达式，带有关系运算符。
+    Performs a comparison operation like ==, !=, <, >, <=, >=.
   }];
 
-  let arguments = (ins AnyType:$lhs, AnyType:$rhs, I32Attr:$op);
-  let results = (outs AnyType:$res);
-  let assemblyFormat = "`" lhs ` op ` rhs ;
+  let arguments = (ins AnyTypeOf<[F32, I32]>:$lhs, AnyTypeOf<[F32, I32]>:$rhs, 
+                   I64Attr:$cmp_predicate);
+  let results = (outs I32:$result);
 }
 
-//===----------------------------------------------------------------------===//
-// AdditiveOp
-//===----------------------------------------------------------------------===//
+/// 算术运算 (+, -, *, /)
+def Cminusf_AddOp : Cminusf_Op<"add", [Pure]> {
+  let summary = "Addition operation";
+  let description = [{ Performs addition of two values. }];
+  let arguments = (ins AnyTypeOf<[F32, I32]>:$lhs, AnyTypeOf<[F32, I32]>:$rhs);
+  let results = (outs AnyTypeOf<[F32, I32]>:$result);
+}
 
-def Cminusf_AdditiveOp : Cminusf_Op<"additive", [Pure]> {
-  let summary = "additive expression";
+def Cminusf_SubOp : Cminusf_Op<"sub", [Pure]> {
+  let summary = "Subtraction operation";
+  let description = [{ Performs subtraction of two values. }];
+  let arguments = (ins AnyTypeOf<[F32, I32]>:$lhs, AnyTypeOf<[F32, I32]>:$rhs);
+  let results = (outs AnyTypeOf<[F32, I32]>:$result);
+}
+
+def Cminusf_MulOp : Cminusf_Op<"mul", [Pure]> {
+  let summary = "Multiplication operation";
+  let description = [{ Performs multiplication of two values. }];
+  let arguments = (ins AnyTypeOf<[F32, I32]>:$lhs, AnyTypeOf<[F32, I32]>:$rhs);
+  let results = (outs AnyTypeOf<[F32, I32]>:$result);
+}
+
+def Cminusf_DivOp : Cminusf_Op<"div", [Pure]> {
+  let summary = "Division operation";
+  let description = [{ Performs division of two values. }];
+  let arguments = (ins AnyTypeOf<[F32, I32]>:$lhs, AnyTypeOf<[F32, I32]>:$rhs);
+  let results = (outs AnyTypeOf<[F32, I32]>:$result);
+}
+
+/// 选择语句 `if (cond) then else`
+def Cminusf_IfOp : Cminusf_Op<"if", [Pure]> {
+  let summary = "Conditional branch operation";
   let description = [{
-    表示一个加法表达式，带有加法运算符。
+    A conditional if-else statement.
   }];
-
-  let arguments = (ins AnyType:$lhs, AnyType:$rhs, I32Attr:$op);
-  let results = (outs AnyType:$res);
-  let assemblyFormat = "`" lhs ` op ` rhs ;
+  
+  let arguments = (ins I32:$condition);
+  let regions = (region AnyRegion:$then_branch, AnyRegion:$else_branch);
 }
 
-//===----------------------------------------------------------------------===//
-// TermOp
-//===----------------------------------------------------------------------===//
-
-def Cminusf_TermOp : Cminusf_Op<"term", [Pure]> {
-  let summary = "term expression";
+/// 循环语句 `while (cond) { body }`
+def Cminusf_WhileOp : Cminusf_Op<"while", [Pure]> {
+  let summary = "While loop operation";
   let description = [{
-    表示一个项，带有乘法运算符。
+    A loop that executes while the condition holds true.
   }];
-
-  let arguments = (ins AnyType:$lhs, AnyType:$rhs, I32Attr:$op);
-  let results = (outs AnyType:$res);
-  let assemblyFormat = "`" lhs ` op ` rhs ;
+  
+  let arguments = (ins I32:$condition);
+  let regions = (region AnyRegion:$body);
 }
 
-//===----------------------------------------------------------------------===//
-// CallOp
-//===----------------------------------------------------------------------===//
-
+/// 函数调用 `call foo(args)`
 def Cminusf_CallOp : Cminusf_Op<"call", [Pure]> {
-  let summary = "function call";
+  let summary = "Function call operation";
   let description = [{
-    表示一个函数调用。
+    Calls a function with given arguments.
   }];
+  
+  let arguments = (ins SymbolRefAttr:$callee, Variadic<AnyTypeOf<[F32,I32]>>:$args);
+  let results = (outs AnyTypeOf<[F32, I32]>:$result);
+}
 
-  let arguments = (ins StrAttr:$name, Variadic<AnyType>:$args);
-  let results = (outs AnyType:$res);
-  let assemblyFormat = "`" name `(` args `)` ;
+/// 返回语句 `return expr`
+def Cminusf_ReturnOp : Cminusf_Op<"return", [Pure]> {
+  let summary = "Return statement";
+  let description = [{
+    Returns a value from a function.
+  }];
+  
+  let arguments = (ins Optional<AnyTypeOf<[F32, I32]>>:$value);
 }

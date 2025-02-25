@@ -5,7 +5,10 @@
 //===----------------------------------------------------------------------===//
 
 #include "Dialect.h"
+#include "ast.hpp"
+#include "mlir/IR/Attributes.h"
 #include "mlir/IR/Builders.h"
+#include "mlir/IR/BuiltinAttributes.h"
 #include "mlir/IR/BuiltinTypes.h"
 #include "mlir/IR/FunctionImplementation.h"
 #include "mlir/IR/OpImplementation.h"
@@ -13,7 +16,7 @@
 using namespace mlir;
 using namespace mlir::cminusf;
 
-#include "CminusfDialect.cpp.inc"
+#include "mlir/CminusfDialect.cpp.inc"
 
 //===----------------------------------------------------------------------===//
 // CminusfDialect
@@ -23,7 +26,7 @@ void CminusfDialect::initialize() {
     // 注册所有自定义操作
     addOperations<
 #define GET_OP_LIST
-#include "CminusfOps.cpp.inc"
+#include "mlir/CminusfOps.cpp.inc"
         >();
 }
 
@@ -83,31 +86,69 @@ static void printBinaryOp(mlir::OpAsmPrinter &printer, mlir::Operation *op) {
 //===----------------------------------------------------------------------===//
 // ConstantOp
 //===----------------------------------------------------------------------===//
-
-void Cminusf_ConstantOp::build(OpBuilder &builder, OperationState &state, int32_t value) {
-    state.addAttribute("value", builder.getI32IntegerAttr(value));
-    state.addTypes(builder.getI32Type());
+// 支持 int32_t 和 float 的构建函数
+void Cminusf_ConstantOp::build(mlir::OpBuilder &builder, mlir::OperationState &state,
+                               int32_t value) {
+    build(builder, state, builder.getI32IntegerAttr(value), builder.getI32Type());
+}
+void Cminusf_ConstantOp::build(mlir::OpBuilder &builder, mlir::OperationState &state, float value) {
+    build(builder, state, builder.getF32FloatAttr(value), builder.getF32Type());
+}
+void Cminusf_ConstantOp::build(mlir::OpBuilder &builder, mlir::OperationState &state,
+                               mlir::Attribute value, mlir::Type type) {
+    state.addAttribute("value", value);
+    state.addTypes(type);
 }
 
-static void print(OpAsmPrinter &printer, Cminusf_ConstantOp op) {
-    printer << "cminusf.constant " << op.value();
-    printer << " : " << op.getType();
+void Cminusf_ConstantOp::print(OpAsmPrinter &printer) {
+    printer << " ";
+    printer.printAttributeWithoutType(getValueAttr());
+    printer << " : " << getResult().getType();
 }
 
-static mlir::ParseResult parseCminusfConstantOp(OpAsmParser &parser, OperationState &result) {
-    IntegerAttr valueAttr;
+mlir::ParseResult Cminusf_ConstantOp::parse(OpAsmParser &parser, OperationState &result) {
+    Attribute valueAttr;
     Type type;
     if (parser.parseAttribute(valueAttr, "value", result.attributes) || parser.parseColonType(type))
         return failure();
+
+    if (!valueAttr.isa<IntegerSetAttr>() && !valueAttr.isa<FloatAttr>()) {
+        return parser.emitError(parser.getNameLoc(), "expected integer or float attribute");
+    }
+    // 新增逻辑：检查属性类型与结果类型是否一致 ---------------
+    if (auto intAttr = valueAttr.dyn_cast<mlir::IntegerAttr>()) {
+        // 如果属性是整数，结果类型必须是 i32
+        if (!type.isInteger(32)) {
+            return parser.emitError(parser.getNameLoc())
+                   << "integer attribute requires i32 result type, but got " << type;
+        }
+    } else if (auto floatAttr = valueAttr.dyn_cast<mlir::FloatAttr>()) {
+        // 如果属性是浮点，结果类型必须是 f32
+        if (!type.isF32()) {
+            return parser.emitError(parser.getNameLoc())
+                   << "float attribute requires f32 result type, but got " << type;
+        }
+    }
+
     result.addTypes(type);
     return success();
 }
 
-static mlir::LogicalResult verify(Cminusf_ConstantOp op) {
-    // 校验常量值类型
-    if (!op.value().getType().isInteger(32))
-        return op.emitOpError("constant value must be a 32-bit integer");
-    return success();
+mlir::LogicalResult Cminusf_ConstantOp::verify(Cminusf_ConstantOp op) {
+    auto valueAttr = op.value();
+    auto valueType = valueAttr.getType();
+
+    // 校验属性类型是否为 i32 或 f32
+    if (!(valueType.isInteger(32) || valueType.isF32())) {
+        return op.emitOpError("attribute must be a 32-bit integer or float");
+    }
+
+    // 校验结果类型与属性类型一致
+    if (valueType != op.getType()) {
+        return op.emitOpError("result type must match the attribute type");
+    }
+
+    return mlir::success();
 }
 
 //===----------------------------------------------------------------------===//
@@ -492,4 +533,4 @@ static ParseResult parseCminusfCallOp(OpAsmParser &parser, OperationState &resul
 static LogicalResult verify(Cminusf_CallOp op) { return success(); }
 
 #define GET_OP_CLASSES
-#include "Ops.cpp.inc"
+#include "mlir/CminusfOps.cpp.inc"
