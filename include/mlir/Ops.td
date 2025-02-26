@@ -1,3 +1,6 @@
+#ifndef CMINUSF_OPS
+#define CMINUSF_OPS
+
 include "mlir/IR/OpBase.td"
 include "mlir/IR/FunctionInterfaces.td"
 include "mlir/IR/SymbolInterfaces.td"
@@ -24,24 +27,27 @@ def Cminusf_ConstantOp : Cminusf_Op<"constant", [Pure]> {
 
   // 使用单一属性存储常量值
   let arguments = (ins
-    AnyAttrOf<[F32Attr, I32Attr]>:$value  // 携带类型和值的属性
+    AnyAttrOf<[F32Attr, I32Attr]>:$value
   );
 
   let results = (outs
-    AnyTypeOf<[F32, I32]>:$result   // 自动推导的结果类型
+    AnyTypeOf<[F32, I32]>:$result
   );
+
+  let assemblyFormat = "`(` $value `)` attr-dict `:` type($result)";
 
   // 自动类型推导：结果类型取自属性类型
   let builders = [
-    OpBuilder<(ins "Attribute":$value), [{
-      auto type = value.getType();
-      $_state.addTypes(type);
+    OpBuilder<(ins "int":$value), [{
+        build($_builder, $_state, $_builder.getIntegerAttr($_builder.getI32Type(), value));
+    }]>,
+    OpBuilder<(ins "float":$value), [{
+        build($_builder, $_state, $_builder.getF32FloatAttr(value));
     }]>
   ];
 
   let hasVerifier = 1;
 }
-
 
 /// 变量声明
 def Cminusf_VarDeclOp : Cminusf_Op<"var_decl", [Pure]> {
@@ -50,8 +56,37 @@ def Cminusf_VarDeclOp : Cminusf_Op<"var_decl", [Pure]> {
     Declares a variable with a given name and type.
   }];
   
-  let arguments = (ins StrAttr:$var_name, AnyTypeOf<[F32, I32]>:$var_type);
-  let results = (outs AnyTypeOf<[F32, I32]>:$result);
+  let arguments = (ins 
+    StrAttr:$var_name, 
+    AnyTypeOf<[F32, I32]>:$var_type,
+    OptionalAttr<I32Attr>:$size
+  );
+
+  let results = (outs AnyTypeOf<[F32, I32, F32MemRef, I32MemRef]>:$result);
+
+  let builders = [
+    // 标量变量
+    OpBuilder<(ins "StringAttr":$var_name, "Type":$var_type), [{
+      $_state.addAttribute("var_name", var_name);
+      $_state.addAttribute("var_type", TypeAttr::get(var_type));
+
+      // 结果类型是标量类型
+      $_state.addTypes(var_type);
+    }]>,
+    
+    // 数组变量: 额外接受 `size`
+    OpBuilder<(ins "StringAttr":$var_name, "Type":$var_type, "IntegerAttr":$size), [{
+      $_state.addAttribute("var_name", var_name);
+      $_state.addAttribute("var_type", TypeAttr::get(var_type));
+      $_state.addAttribute("size", size);
+
+      // 结果类型是 MemRef
+      $_state.addTypes(MemRefType::get({size.getInt()}, var_type));
+    }]>
+  ];
+  
+  let hasCustomAssemblyFormat = 1;
+  let hasVerifier = 1;
 }
 
 /// 函数声明
@@ -194,3 +229,5 @@ def Cminusf_ReturnOp : Cminusf_Op<"return", [Pure]> {
   
   let arguments = (ins Optional<AnyTypeOf<[F32, I32]>>:$value);
 }
+
+#endif // CMINUSF_OPS

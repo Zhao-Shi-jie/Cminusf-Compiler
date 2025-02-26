@@ -1,9 +1,3 @@
-//===- CminusfOpsDialect.cpp - Cminusf dialect and ops implementation --------------===//
-//
-// This file implements the dialect and operations in the Cminusf dialect.
-//
-//===----------------------------------------------------------------------===//
-
 #include "Dialect.h"
 #include "ast.hpp"
 #include "mlir/IR/Attributes.h"
@@ -12,6 +6,7 @@
 #include "mlir/IR/BuiltinTypes.h"
 #include "mlir/IR/FunctionImplementation.h"
 #include "mlir/IR/OpImplementation.h"
+#include <cstdint>
 
 using namespace mlir;
 using namespace mlir::cminusf;
@@ -28,11 +23,6 @@ void CminusfDialect::initialize() {
 #define GET_OP_LIST
 #include "mlir/CminusfOps.cpp.inc"
         >();
-}
-
-CminusfDialect::CminusfDialect(MLIRContext *context)
-    : Dialect(getDialectNamespace(), context, TypeID::get<CminusfDialect>()) {
-    initialize();
 }
 
 ///===----------------------------------------------------------------------===//
@@ -87,35 +77,23 @@ static void printBinaryOp(mlir::OpAsmPrinter &printer, mlir::Operation *op) {
 // ConstantOp
 //===----------------------------------------------------------------------===//
 // 支持 int32_t 和 float 的构建函数
-void Cminusf_ConstantOp::build(mlir::OpBuilder &builder, mlir::OperationState &state,
-                               int32_t value) {
-    build(builder, state, builder.getI32IntegerAttr(value), builder.getI32Type());
+void ConstantOp::build(mlir::OpBuilder &builder, mlir::OperationState &state, int value) {
+    ConstantOp::build(builder, state, builder.getI32Type(), builder.getI32IntegerAttr(value));
 }
-void Cminusf_ConstantOp::build(mlir::OpBuilder &builder, mlir::OperationState &state, float value) {
-    build(builder, state, builder.getF32FloatAttr(value), builder.getF32Type());
-}
-void Cminusf_ConstantOp::build(mlir::OpBuilder &builder, mlir::OperationState &state,
-                               mlir::Attribute value, mlir::Type type) {
-    state.addAttribute("value", value);
-    state.addTypes(type);
+void ConstantOp::build(mlir::OpBuilder &builder, mlir::OperationState &state, float value) {
+    ConstantOp::build(builder, state, builder.getF32Type(), builder.getF32FloatAttr(value));
 }
 
-void Cminusf_ConstantOp::print(OpAsmPrinter &printer) {
-    printer << " ";
-    printer.printAttributeWithoutType(getValueAttr());
-    printer << " : " << getResult().getType();
-}
-
-mlir::ParseResult Cminusf_ConstantOp::parse(OpAsmParser &parser, OperationState &result) {
+mlir::ParseResult ConstantOp::parse(OpAsmParser &parser, OperationState &result) {
     Attribute valueAttr;
     Type type;
     if (parser.parseAttribute(valueAttr, "value", result.attributes) || parser.parseColonType(type))
         return failure();
 
-    if (!valueAttr.isa<IntegerSetAttr>() && !valueAttr.isa<FloatAttr>()) {
+    if (!valueAttr.isa<IntegerAttr>() && !valueAttr.isa<FloatAttr>()) {
         return parser.emitError(parser.getNameLoc(), "expected integer or float attribute");
     }
-    // 新增逻辑：检查属性类型与结果类型是否一致 ---------------
+    // 检查属性类型与结果类型是否一致
     if (auto intAttr = valueAttr.dyn_cast<mlir::IntegerAttr>()) {
         // 如果属性是整数，结果类型必须是 i32
         if (!type.isInteger(32)) {
@@ -134,34 +112,58 @@ mlir::ParseResult Cminusf_ConstantOp::parse(OpAsmParser &parser, OperationState 
     return success();
 }
 
-mlir::LogicalResult Cminusf_ConstantOp::verify(Cminusf_ConstantOp op) {
-    auto valueAttr = op.value();
-    auto valueType = valueAttr.getType();
-
-    // 校验属性类型是否为 i32 或 f32
-    if (!(valueType.isInteger(32) || valueType.isF32())) {
-        return op.emitOpError("attribute must be a 32-bit integer or float");
+mlir::LogicalResult ConstantOp::verify() {
+    if (!getValue().isa<FloatAttr>() && !getValue().isa<IntegerAttr>()) {
+        return emitError("value must be either an integer (i32) or floating-point (f32)");
     }
-
-    // 校验结果类型与属性类型一致
-    if (valueType != op.getType()) {
-        return op.emitOpError("result type must match the attribute type");
-    }
-
-    return mlir::success();
+    return success();
 }
 
 //===----------------------------------------------------------------------===//
 // VarDeclarationOp
 //===----------------------------------------------------------------------===//
 
-void Cminusf_VarDeclarationOp::build(OpBuilder &builder, OperationState &state, Type type,
-                                     StringRef name, Optional<int32_t> size) {
-    state.addAttribute("name", builder.getStringAttr(name));
-    if (size.hasValue()) {
-        state.addAttribute("size", builder.getI32IntegerAttr(size.getValue()));
+void VarDeclOp::build(mlir::OpBuilder &builder, mlir::OperationState &state, StringAttr var_name,
+                      Type var_type) {
+    state.addAttribute("var_name", var_name);
+    state.addAttribute("var_type", TypeAttr::get(var_type));
+
+    // 结果类型是标量类型
+    state.addTypes(var_type);
+    VarDeclOp::build(builder, state, var_type, var_name, var_type);
+}
+
+void VarDeclOp::build(mlir::OpBuilder &builder, mlir::OperationState &state, mlir::Type var_type,
+                      mlir::StringAttr var_name, /*optional*/ mlir::IntegerAttr size) {
+    // 添加变量类型作为操作数
+    state.addOperands(var_type);
+
+    // 将变量名称添加为属性
+    state.addAttribute(getVarNameAttrName(state.name), var_name);
+
+    // 如果 size 存在，则添加 size 属性
+    if (size) {
+        state.addAttribute(getSizeAttrName(state.name), size);
     }
-    state.addTypes(type);
+
+    // 根据类型和 size 决定结果类型
+    if (var_type.isa<F32Type>()) {
+        // 如果是标量类型 F32，则添加 F32 类型到结果类型
+        odsState.addTypes(F32Type::get(odsBuilder.getContext()));
+        if (size && size.getValue() > 0) {
+            // 如果是 F32 数组，添加 MemRef 类型
+            odsState.addTypes(MemRefType::get({static_cast<int64_t>(size.getValue())},
+                                              F32Type::get(odsBuilder.getContext())));
+        }
+    } else if (var_type.isa<I32Type>()) {
+        // 如果是标量类型 I32，则添加 I32 类型到结果类型
+        odsState.addTypes(I32Type::get(odsBuilder.getContext()));
+        if (size && size.getValue() > 0) {
+            // 如果是 I32 数组，添加 MemRef 类型
+            odsState.addTypes(MemRefType::get({static_cast<int64_t>(size.getValue())},
+                                              I32Type::get(odsBuilder.getContext())));
+        }
+    }
 }
 
 static void print(OpAsmPrinter &printer, Cminusf_VarDeclarationOp op) {
@@ -377,30 +379,19 @@ static LogicalResult verify(Cminusf_IterationStmtOp op) { return success(); }
 // AssignOp
 //===----------------------------------------------------------------------===//
 
-void Cminusf_AssignOp::build(OpBuilder &builder, OperationState &state, Value lhs, Value rhs) {
-    state.addOperands(lhs);
-    state.addOperands(rhs);
-    state.addTypes(lhs.getType());
-}
+void Cminusf_AssignOp::build(OpBuilder &builder, OperationState &state, Value var, Value expr) {
+    auto varType = var.getType();
+    auto exprType = expr.getType();
 
-static void print(OpAsmPrinter &printer, Cminusf_AssignOp op) {
-    printer << "cminusf.assign ";
-    printer.printOperand(op.getOperands().front());
-    printer << " = ";
-    printer.printOperand(op.getOperands()[1]);
-}
+    // 确保变量类型和表达式类型匹配
+    if (varType != exprType) {
+        emitError("变量类型 ") << varType << " 与表达式类型 " << exprType << " 不匹配";
+    }
 
-static ParseResult parseCminusfAssignOp(OpAsmParser &parser, OperationState &result) {
-    OpAsmParser::OperandType lhs, rhs;
-    Type type;
-    if (parser.parseOperand(lhs) || parser.parseEqual() || parser.parseOperand(rhs) ||
-        parser.parseColonType(type) || parser.resolveOperands({lhs, rhs}, type, result.operands))
-        return failure();
-    result.addTypes(type);
-    return success();
+    // 设置操作的类型
+    state.addTypes(varType);
+    state.addOperands({var, expr});
 }
-
-static LogicalResult verify(Cminusf_AssignOp op) { return success(); }
 
 //===----------------------------------------------------------------------===//
 // SimpleOp
