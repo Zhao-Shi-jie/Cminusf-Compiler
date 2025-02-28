@@ -56,15 +56,23 @@ def Cminusf_VarDeclOp : Cminusf_Op<"var_decl", [Pure]> {
     Declares a variable with a given name and type.
   }];
   
-  let arguments = (ins 
+  let arguments = (ins
+    /*属性的类型:属性的名称（标识符）
+      名称将用于生成访问方法的基础，ex:
+      getVarNameAttr();getVarTypeAttrAttr();getSizeAttr();
+      getVarName();getSize();没有直接var访问方法，因为是混合类型
+    */
     StrAttr:$var_name, 
-    AnyTypeOf<[F32, I32]>:$var_type,
+    AnyAttrOf<[F32Attr, I32Attr]>:$var_type_attr,
     OptionalAttr<I32Attr>:$size
   );
 
   let results = (outs AnyTypeOf<[F32, I32, F32MemRef, I32MemRef]>:$result);
 
   let builders = [
+    /*
+      参数中的字符串指定build的参数类型
+    */
     // 标量变量
     OpBuilder<(ins "StringAttr":$var_name, "Type":$var_type), [{
       $_state.addAttribute("var_name", var_name);
@@ -84,8 +92,16 @@ def Cminusf_VarDeclOp : Cminusf_Op<"var_decl", [Pure]> {
       $_state.addTypes(MemRefType::get({size.getInt()}, var_type));
     }]>
   ];
-  
-  let hasCustomAssemblyFormat = 1;
+
+  // let assemblyFormat = [{
+  //   `(` $var_name `:` $var_type_attr (`,` `size` `=` $size^)? `)` attr-dict `:` type($result)
+  // }];
+  // let assemblyFormat = [{
+  //   `(` $var_name (`,` `size` `=` $size^)? `)` attr-dict `:` type($result)
+  // }];
+  let assemblyFormat = [{
+    $var_name (`[` $size^ `]`)? attr-dict `:` type($result)
+  }];
   let hasVerifier = 1;
 }
 
@@ -103,6 +119,15 @@ def Cminusf_FunDeclOp : Cminusf_Op<"fun_decl", [Symbol]> {
     OptionalAttr<DictArrayAttr>:$res_attrs
   );
   let regions = (region AnyRegion:$body);
+
+  let assemblyFormat = [{
+    $sym_name `(` `:` $function_type `)` (`arg_attrs` $arg_attrs^)? (`res_attrs` $res_attrs^)? attr-dict-with-keyword $body
+  }];
+  // let assemblyFormat = [{
+  //   $sym_name `:` type($function_type) 
+  //   (`arg_attrs` $arg_attrs^)? (`res_attrs` $res_attrs^)? 
+  //   attr-dict-with-keyword $body
+  // }];
 }
 
 /// 赋值表达式 `var = expr`

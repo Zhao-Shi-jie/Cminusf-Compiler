@@ -2,10 +2,13 @@
 #include "ast.hpp"
 #include "mlir/IR/Attributes.h"
 #include "mlir/IR/Builders.h"
+#include "mlir/IR/BuiltinAttributeInterfaces.h"
 #include "mlir/IR/BuiltinAttributes.h"
 #include "mlir/IR/BuiltinTypes.h"
+#include "mlir/IR/Diagnostics.h"
 #include "mlir/IR/FunctionImplementation.h"
 #include "mlir/IR/OpImplementation.h"
+#include "mlir/IR/Types.h"
 #include <cstdint>
 
 using namespace mlir;
@@ -126,67 +129,80 @@ mlir::LogicalResult ConstantOp::verify() {
 void VarDeclOp::build(mlir::OpBuilder &builder, mlir::OperationState &state, StringAttr var_name,
                       Type var_type) {
     state.addAttribute("var_name", var_name);
-    state.addAttribute("var_type", TypeAttr::get(var_type));
-
-    // 结果类型是标量类型
+    state.addAttribute("var_type_attr", TypeAttr::get(var_type));
+    // 结果类型与参数类型一致
     state.addTypes(var_type);
-    VarDeclOp::build(builder, state, var_type, var_name, var_type);
 }
 
-void VarDeclOp::build(mlir::OpBuilder &builder, mlir::OperationState &state, mlir::Type var_type,
-                      mlir::StringAttr var_name, /*optional*/ mlir::IntegerAttr size) {
-    // 添加变量类型作为操作数
-    state.addOperands(var_type);
+void VarDeclOp::build(mlir::OpBuilder &builder, mlir::OperationState &state,
+                      mlir::StringAttr var_name, mlir::Type var_type,
+                      /*optional*/ mlir::IntegerAttr size) {
+    state.addAttribute("var_name", var_name);
+    state.addAttribute("var_type_attr", TypeAttr::get(var_type));
+    state.addAttribute("size", size);
+    // 结果类型是 MemRef
+    state.addTypes(MemRefType::get({size.getInt()}, var_type));
+}
 
-    // 将变量名称添加为属性
-    state.addAttribute(getVarNameAttrName(state.name), var_name);
+LogicalResult VarDeclOp::verify() {
+    // 获取基本类型
+    Attribute varTypeAttr = getVarTypeAttrAttr();
+    Type baseType;
 
-    // 如果 size 存在，则添加 size 属性
-    if (size) {
-        state.addAttribute(getSizeAttrName(state.name), size);
-    }
-
-    // 根据类型和 size 决定结果类型
-    if (var_type.isa<F32Type>()) {
-        // 如果是标量类型 F32，则添加 F32 类型到结果类型
-        odsState.addTypes(F32Type::get(odsBuilder.getContext()));
-        if (size && size.getValue() > 0) {
-            // 如果是 F32 数组，添加 MemRef 类型
-            odsState.addTypes(MemRefType::get({static_cast<int64_t>(size.getValue())},
-                                              F32Type::get(odsBuilder.getContext())));
+    if (auto intAttr = varTypeAttr.dyn_cast<IntegerAttr>()) {
+        baseType = intAttr.getType();
+        if (baseType.getIntOrFloatBitWidth() != 32) {
+            return emitError("Integer is not 32 bit, but ") << baseType.getIntOrFloatBitWidth();
         }
-    } else if (var_type.isa<I32Type>()) {
-        // 如果是标量类型 I32，则添加 I32 类型到结果类型
-        odsState.addTypes(I32Type::get(odsBuilder.getContext()));
-        if (size && size.getValue() > 0) {
-            // 如果是 I32 数组，添加 MemRef 类型
-            odsState.addTypes(MemRefType::get({static_cast<int64_t>(size.getValue())},
-                                              I32Type::get(odsBuilder.getContext())));
+    } else if (auto floatAttr = varTypeAttr.dyn_cast<FloatAttr>()) {
+        baseType = floatAttr.getType();
+        if (baseType.getIntOrFloatBitWidth() != 32) {
+            return emitError("Float is not 32 bit, but ") << baseType.getIntOrFloatBitWidth();
         }
+    } else {
+        // 检查基本类型是否有效（根据您的类型系统调整）
+        // if (!baseType.isSignlessInteger(32) && !baseType.isF32()) {
+        //     return emitOpError("variable's type should be i32 or f32, but got ") << baseType;
+        // }
+        baseType = varTypeAttr.dyn_cast<TypedAttr>().getType();
+        return emitOpError("variable's type should be i32 or f32, but got ") << baseType;
     }
-}
 
-static void print(OpAsmPrinter &printer, Cminusf_VarDeclarationOp op) {
-    printer << "cminusf.vardecl " << op.name();
-    if (op.size().hasValue()) {
-        printer << "[" << op.size().getValue() << "]";
+    // 获取结果类型（可能是基本类型或MemRefType）
+    Type resultType = getType();
+
+    // 检查数组情况
+    if (auto sizeAttr = getSizeAttr()) {
+        int64_t size = sizeAttr.getInt();
+        if (size <= 0) {
+            return emitOpError("size should more than 0");
+        }
+        // 如果有size属性，结果类型必须是MemRefType
+        auto memRefType = resultType.dyn_cast<MemRefType>();
+        if (!memRefType)
+            return emitOpError("当指定size属性时，结果类型必须是memref类型");
+
+        // 验证MemRefType的元素类型与指定的变量类型一致
+        if (memRefType.getElementType() != baseType)
+            return emitOpError("memref元素类型 ")
+                   << memRefType.getElementType() << " 与指定的变量类型不匹配 " << baseType;
+
+        // 验证MemRefType的维度与size属性一致
+        if (memRefType.getRank() != 1)
+            return emitOpError("数组变量的memref必须是一维的");
+
+        // 验证MemRefType的维度大小与size属性一致
+        if (memRefType.getDimSize(0) != size)
+            return emitOpError("memref维度大小 ")
+                   << memRefType.getDimSize(0) << " 与size属性不匹配 " << size;
+    } else {
+        // 如果没有size属性，结果类型必须与变量类型相同
+        if (resultType != baseType)
+            return emitOpError("结果类型 ") << resultType << " 与指定的变量类型不匹配 " << baseType;
     }
-    printer << " : " << op.getType();
-}
 
-static ParseResult parseCminusfVarDeclarationOp(OpAsmParser &parser, OperationState &result) {
-    StringAttr nameAttr;
-    Optional<int32_t> sizeAttr;
-    Type type;
-    if (parser.parseAttribute(nameAttr, "name", result.attributes) ||
-        parser.parseOptionalAttribute(sizeAttr, "size", result.attributes) ||
-        parser.parseColonType(type))
-        return failure();
-    result.addTypes(type);
     return success();
 }
-
-static LogicalResult verify(Cminusf_VarDeclarationOp op) { return success(); }
 
 //===----------------------------------------------------------------------===//
 // FunDeclarationOp
