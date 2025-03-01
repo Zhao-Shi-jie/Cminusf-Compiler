@@ -5,6 +5,7 @@ include "mlir/IR/OpBase.td"
 include "mlir/IR/FunctionInterfaces.td"
 include "mlir/IR/SymbolInterfaces.td"
 include "mlir/Interfaces/SideEffectInterfaces.td"
+include "mlir/Interfaces/InferTypeOpInterface.td"
 
 def Cminusf_Dialect : Dialect {
   let name = "cminusf";
@@ -106,10 +107,17 @@ def Cminusf_VarDeclOp : Cminusf_Op<"var_decl", [Pure]> {
 }
 
 /// 函数声明
-def Cminusf_FunDeclOp : Cminusf_Op<"fun_decl", [Symbol]> {
+def Cminusf_FunDeclOp : Cminusf_Op<"fun_decl", [FunctionOpInterface, IsolatedFromAbove]> {
   let summary = "Function declaration";
   let description = [{
     Declares a function with a name, return type, and parameters.
+
+    Example:
+    ```mlir
+    cminusf.fun_decl @factorial(%n: i32) -> i32 {
+      // function body
+    }
+    ```
   }];
 
   let arguments = (ins
@@ -120,27 +128,40 @@ def Cminusf_FunDeclOp : Cminusf_Op<"fun_decl", [Symbol]> {
   );
   let regions = (region AnyRegion:$body);
 
-  let assemblyFormat = [{
-    $sym_name `(` `:` $function_type `)` (`arg_attrs` $arg_attrs^)? (`res_attrs` $res_attrs^)? attr-dict-with-keyword $body
+  let builders = [OpBuilder<(ins
+    "StringRef":$name, "FunctionType":$type,
+    CArg<"ArrayRef<NamedAttribute>", "{}">:$attrs)
+  >];
+  let extraClassDeclaration = [{
+    //===------------------------------------------------------------------===//
+    // FunctionOpInterface Methods
+    //===------------------------------------------------------------------===//
+
+    /// Returns the argument types of this function.
+    ArrayRef<Type> getArgumentTypes() { return getFunctionType().getInputs(); }
+
+    /// Returns the result types of this function.
+    ArrayRef<Type> getResultTypes() { return getFunctionType().getResults(); }
   }];
+  
+  let hasCustomAssemblyFormat = 1;
+  let skipDefaultBuilders = 1;
   // let assemblyFormat = [{
-  //   $sym_name `:` type($function_type) 
-  //   (`arg_attrs` $arg_attrs^)? (`res_attrs` $res_attrs^)? 
-  //   attr-dict-with-keyword $body
+  //   $sym_name `(` `:` $function_type `)` (`arg_attrs` $arg_attrs^)? (`res_attrs` $res_attrs^)? attr-dict-with-keyword $body
   // }];
 }
 
 /// 赋值表达式 `var = expr`
-def Cminusf_AssignOp : Cminusf_Op<"assign", [Pure]> {
+def Cminusf_AssignOp : Cminusf_Op<"assign", [DeclareOpInterfaceMethods<InferTypeOpInterface>]> {
   let summary = "Variable assignment operation";
   let description = [{
     将表达式的值赋给左值变量，要求变量和表达式类型严格匹配。
     
     示例：
-      %0 = "cminusf.assign"(%var, %expr) : (i32, i32) -> i32
+      %result = cminusf.assign %var = %expr : i32
   }];
 
-let arguments = (ins 
+  let arguments = (ins 
     // `var` 是变量（左值），可以是 `i32` 或 `f32`
     AnyTypeOf<[F32, I32]>:$var,
     // `expr` 必须是 `var` 的相同类型
@@ -159,29 +180,102 @@ let arguments = (ins
       auto exprType = expr.getType();
 
       // 确保变量类型和表达式类型匹配
-      if (varType != exprType) {
-        emitError("变量类型 ") << varType 
-             << " 与表达式类型 " << exprType << " 不匹配";
-      }
+      assert(varType == exprType && "变量类型与表达式类型不匹配");
 
       // 结果类型与变量类型一致
       $_state.addTypes(varType);
       $_state.addOperands({var, expr});
     }]>
   ];
-}
 
-/// 比较运算
-def Cminusf_CmpOp : Cminusf_Op<"cmp", [Pure]> {
-  let summary = "Comparison operation";
-  let description = [{
-    Performs a comparison operation like ==, !=, <, >, <=, >=.
+  let hasCustomAssemblyFormat = 1;
+  let hasVerifier = 1;
+  
+  let extraClassDeclaration = [{
+    LogicalResult inferReturnTypes(MLIRContext *context,
+                                  std::optional<Location> location,
+                                  ValueRange operands,
+                                  DictionaryAttr attributes,
+                                  RegionRange regions,
+                                  SmallVectorImpl<Type> &inferredReturnTypes);
   }];
-
-  let arguments = (ins AnyTypeOf<[F32, I32]>:$lhs, AnyTypeOf<[F32, I32]>:$rhs, 
-                   I64Attr:$cmp_predicate);
-  let results = (outs I32:$result);
 }
+
+// // 首先，在文件开头定义比较谓词枚举
+// def Cminusf_CmpPredicateEQ : I32EnumAttrCase<"eq", 0>;
+// def Cminusf_CmpPredicateNE : I32EnumAttrCase<"ne", 1>;
+// def Cminusf_CmpPredicateLT : I32EnumAttrCase<"lt", 2>;
+// def Cminusf_CmpPredicateLE : I32EnumAttrCase<"le", 3>;
+// def Cminusf_CmpPredicateGT : I32EnumAttrCase<"gt", 4>;
+// def Cminusf_CmpPredicateGE : I32EnumAttrCase<"ge", 5>;
+
+// def Cminusf_CmpPredicate : I32EnumAttr<"CmpPredicate", "comparison predicate",
+//   [Cminusf_CmpPredicateEQ, Cminusf_CmpPredicateNE, Cminusf_CmpPredicateLT, 
+//    Cminusf_CmpPredicateLE, Cminusf_CmpPredicateGT, Cminusf_CmpPredicateGE]> {
+//   let cppNamespace = "::cminusf::mlir";
+// }
+
+// /// 比较运算
+// def Cminusf_CmpOp : Cminusf_Op<"cmp", [Pure, DeclareOpInterfaceMethods<InferTypeOpInterface>]> {
+//   let summary = "Comparison operation";
+//   let description = [{
+//     Performs a comparison operation like ==, !=, <, >, <=, >=.
+    
+//     The operation takes two operands of the same type (either f32 or i32)
+//     and returns an i32 result (1 for true, 0 for false).
+    
+//     Example:
+//     ```mlir
+//     %result = cminusf.cmp eq %lhs, %rhs : i32
+//     %result = cminusf.cmp lt %lhs, %rhs : f32
+//     ```
+    
+//     Available predicates:
+//     - eq: equal (==)
+//     - ne: not equal (!=)
+//     - lt: less than (<)
+//     - le: less than or equal (<=)
+//     - gt: greater than (>)
+//     - ge: greater than or equal (>=)
+//   }];
+
+//   let arguments = (ins AnyTypeOf<[F32, I32]>:$lhs, 
+//                        AnyTypeOf<[F32, I32]>:$rhs,
+//                        Cminusf_CmpPredicate:$predicate);
+  
+//   let results = (outs I32:$result);
+  
+//   // 添加自定义验证
+//   let hasVerifier = 1;
+  
+//   // 添加自定义汇编格式
+//   let hasCustomAssemblyFormat = 1;
+  
+//   // 为构建器添加方便的方法
+//   let builders = [
+//     OpBuilder<(ins "Value":$lhs, "Value":$rhs, "CmpPredicate":$predicate), [{
+//       build($_builder, $_state, $_builder.getI32Type(), lhs, rhs, 
+//             CmpPredicateAttr::get($_builder.getContext(), predicate));
+//     }]>,
+//     OpBuilder<(ins "Value":$lhs, "Value":$rhs, "StringRef":$predicate), [{
+//       build($_builder, $_state, $_builder.getI32Type(), lhs, rhs, 
+//             CmpPredicateAttr::get($_builder.getContext(), 
+//               stringToCmpPredicate(predicate)));
+//     }]>
+//   ];
+  
+//   // 添加额外方法
+//   let extraClassDeclaration = [{
+//     /// 从字符串获取谓词
+//     static CmpPredicate stringToCmpPredicate(StringRef str);
+    
+//     /// 获取谓词的反向谓词（例如：lt 的反向是 ge）
+//     CmpPredicate getInversePredicate();
+    
+//     /// 检查两个操作数是否为同一类型
+//     bool isSameOperandsType();
+//   }];
+// }
 
 /// 算术运算 (+, -, *, /)
 def Cminusf_AddOp : Cminusf_Op<"add", [Pure]> {

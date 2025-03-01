@@ -208,75 +208,90 @@ LogicalResult VarDeclOp::verify() {
 // FunDeclarationOp
 //===----------------------------------------------------------------------===//
 
-void Cminusf_FunDeclarationOp::build(OpBuilder &builder, OperationState &state, StringRef name,
-                                     FunctionType type) {
-    state.addAttribute(SymbolTable::getSymbolAttrName(), builder.getStringAttr(name));
-    state.addAttribute("type", TypeAttr::get(type));
-    state.addRegion();
+void FunDeclOp::build(mlir::OpBuilder &builder, mlir::OperationState &state, llvm::StringRef name,
+                      mlir::FunctionType type, llvm::ArrayRef<mlir::NamedAttribute> attrs) {
+    // 使用 FunctionOpInterface 提供的便捷方法来填充我们的 Cminusf_FunDeclOp 状态
+    // 并创建一个入口块
+    buildWithEntryBlock(builder, state, name, type, attrs, type.getInputs());
 }
 
-static void print(OpAsmPrinter &printer, Cminusf_FunDeclarationOp op) {
-    printer << "cminusf.fundecl @" << op.getName() << "(";
-    if (!op.getBody().empty()) {
-        interleaveComma(op.getBody().front().getArguments(), printer);
-    }
-    printer << ")";
-    printer.printOptionalAttrDict(op->getAttrs(), {SymbolTable::getSymbolAttrName(), "type"});
-    printer << " : " << op.getType();
-    printer.printRegion(op.getBody(), false, true);
+ParseResult FunDeclOp::parse(mlir::OpAsmParser &parser, mlir::OperationState &result) {
+    // 调用 FunctionOpInterface 提供的工具方法来解析函数操作
+    auto buildFuncType = [](mlir::Builder &builder, llvm::ArrayRef<mlir::Type> argTypes,
+                            llvm::ArrayRef<mlir::Type> results,
+                            mlir::function_interface_impl::VariadicFlag,
+                            std::string &) { return builder.getFunctionType(argTypes, results); };
+
+    return mlir::function_interface_impl::parseFunctionOp(
+        parser, result, /*allowVariadic=*/false, getFunctionTypeAttrName(result.name),
+        buildFuncType, getArgAttrsAttrName(result.name), getResAttrsAttrName(result.name));
 }
 
-static ParseResult parseCminusfFunDeclarationOp(OpAsmParser &parser, OperationState &result) {
-    StringAttr nameAttr;
-    Type type;
-    if (parser.parseSymbolName(nameAttr, SymbolTable::getSymbolAttrName(), result.attributes) ||
-        parser.parseColonType(type))
-        return failure();
-    result.addAttribute("type", TypeAttr::get(type.cast<FunctionType>()));
-    auto *body = result.addRegion();
-    if (parser.parseRegion(*body, /*arguments=*/{}, /*argTypes=*/{}))
-        return failure();
-    return success();
-}
-
-static LogicalResult verify(Cminusf_FunDeclarationOp op) {
-    // 校验函数类型是否正确
-    if (!op.getType().isa<FunctionType>())
-        return op.emitOpError("requires a 'FunctionType' attribute");
-    return success();
+void FunDeclOp::print(mlir::OpAsmPrinter &p) {
+    // 调用 FunctionOpInterface 提供的工具方法来打印函数操作
+    mlir::function_interface_impl::printFunctionOp(p, *this, /*isVariadic=*/false,
+                                                   getFunctionTypeAttrName().getValue(),
+                                                   getArgAttrsAttrName(), getResAttrsAttrName());
 }
 
 //===----------------------------------------------------------------------===//
-// ParamOp
+// AssignOp
 //===----------------------------------------------------------------------===//
 
-void Cminusf_ParamOp::build(OpBuilder &builder, OperationState &state, Type type, StringRef name,
-                            bool isArray) {
-    state.addAttribute("name", builder.getStringAttr(name));
-    state.addAttribute("isArray", builder.getBoolAttr(isArray));
-    state.addTypes(type);
+void AssignOp::print(OpAsmPrinter &p) {
+    p << " " << getVar() << " = " << getExpr();
+    // p.printOptionalAttrDict((*this)->getAttrs());
+    p << " : " << getResult().getType();
 }
 
-static void print(OpAsmPrinter &printer, Cminusf_ParamOp op) {
-    printer << "cminusf.param " << op.name();
-    if (op.isArray())
-        printer << "[]";
-    printer << " : " << op.getType();
-}
-
-static ParseResult parseCminusfParamOp(OpAsmParser &parser, OperationState &result) {
-    StringAttr nameAttr;
-    BoolAttr isArrayAttr;
+ParseResult AssignOp::parse(OpAsmParser &parser, OperationState &result) {
+    OpAsmParser::UnresolvedOperand var, expr;
     Type type;
-    if (parser.parseAttribute(nameAttr, "name", result.attributes) ||
-        parser.parseAttribute(isArrayAttr, "isArray", result.attributes) ||
-        parser.parseColonType(type))
+
+    if (parser.parseOperand(var) || parser.parseEqual() || parser.parseOperand(expr) ||
+        parser.parseOptionalAttrDict(result.attributes) || parser.parseColonType(type))
         return failure();
+
+    if (parser.resolveOperand(var, type, result.operands) ||
+        parser.resolveOperand(expr, type, result.operands))
+        return failure();
+
     result.addTypes(type);
     return success();
 }
 
-static LogicalResult verify(Cminusf_ParamOp op) { return success(); }
+LogicalResult AssignOp::verify() {
+    // 检查变量和表达式类型是否匹配
+    if (getVar().getType() != getExpr().getType())
+        return emitOpError("变量类型 ")
+               << getVar().getType() << " 与表达式类型 " << getExpr().getType() << " 不匹配";
+
+    // 检查结果类型是否与变量类型匹配
+    if (getResult().getType() != getVar().getType())
+        return emitOpError("结果类型 ")
+               << getResult().getType() << " 与变量类型 " << getVar().getType() << " 不匹配";
+
+    return success();
+}
+
+LogicalResult AssignOp::inferReturnTypes(MLIRContext *context, std::optional<Location> location,
+                                         ValueRange operands, DictionaryAttr attributes,
+                                         RegionRange regions,
+                                         SmallVectorImpl<Type> &inferredReturnTypes) {
+    // 确保有两个操作数
+    if (operands.size() != 2)
+        return emitOptionalError(location, "需要两个操作数（变量和表达式）");
+
+    // 检查类型匹配
+    auto varType = operands[0].getType();
+    auto exprType = operands[1].getType();
+    if (varType != exprType)
+        return emitOptionalError(location, "变量类型与表达式类型不匹配");
+
+    // 结果类型与变量类型一致
+    inferredReturnTypes.push_back(varType);
+    return success();
+}
 
 //===----------------------------------------------------------------------===//
 // CompoundStmtOp
