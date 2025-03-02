@@ -126,16 +126,15 @@ mlir::LogicalResult ConstantOp::verify() {
 // VarDeclarationOp
 //===----------------------------------------------------------------------===//
 
-void VarDeclOp::build(mlir::OpBuilder &builder, mlir::OperationState &state, StringAttr var_name,
-                      Type var_type) {
+void VarDeclOp::build(mlir::OpBuilder &builder, mlir::OperationState &state, StringAttr var_name, Type var_type) {
     state.addAttribute("var_name", var_name);
     state.addAttribute("var_type_attr", TypeAttr::get(var_type));
     // 结果类型与参数类型一致
     state.addTypes(var_type);
 }
 
-void VarDeclOp::build(mlir::OpBuilder &builder, mlir::OperationState &state,
-                      mlir::StringAttr var_name, mlir::Type var_type,
+void VarDeclOp::build(mlir::OpBuilder &builder, mlir::OperationState &state, mlir::StringAttr var_name,
+                      mlir::Type var_type,
                       /*optional*/ mlir::IntegerAttr size) {
     state.addAttribute("var_name", var_name);
     state.addAttribute("var_type_attr", TypeAttr::get(var_type));
@@ -193,8 +192,7 @@ LogicalResult VarDeclOp::verify() {
 
         // 验证MemRefType的维度大小与size属性一致
         if (memRefType.getDimSize(0) != size)
-            return emitOpError("memref维度大小 ")
-                   << memRefType.getDimSize(0) << " 与size属性不匹配 " << size;
+            return emitOpError("memref维度大小 ") << memRefType.getDimSize(0) << " 与size属性不匹配 " << size;
     } else {
         // 如果没有size属性，结果类型必须与变量类型相同
         if (resultType != baseType)
@@ -218,19 +216,17 @@ void FunDeclOp::build(mlir::OpBuilder &builder, mlir::OperationState &state, llv
 ParseResult FunDeclOp::parse(mlir::OpAsmParser &parser, mlir::OperationState &result) {
     // 调用 FunctionOpInterface 提供的工具方法来解析函数操作
     auto buildFuncType = [](mlir::Builder &builder, llvm::ArrayRef<mlir::Type> argTypes,
-                            llvm::ArrayRef<mlir::Type> results,
-                            mlir::function_interface_impl::VariadicFlag,
+                            llvm::ArrayRef<mlir::Type> results, mlir::function_interface_impl::VariadicFlag,
                             std::string &) { return builder.getFunctionType(argTypes, results); };
 
     return mlir::function_interface_impl::parseFunctionOp(
-        parser, result, /*allowVariadic=*/false, getFunctionTypeAttrName(result.name),
-        buildFuncType, getArgAttrsAttrName(result.name), getResAttrsAttrName(result.name));
+        parser, result, /*allowVariadic=*/false, getFunctionTypeAttrName(result.name), buildFuncType,
+        getArgAttrsAttrName(result.name), getResAttrsAttrName(result.name));
 }
 
 void FunDeclOp::print(mlir::OpAsmPrinter &p) {
     // 调用 FunctionOpInterface 提供的工具方法来打印函数操作
-    mlir::function_interface_impl::printFunctionOp(p, *this, /*isVariadic=*/false,
-                                                   getFunctionTypeAttrName().getValue(),
+    mlir::function_interface_impl::printFunctionOp(p, *this, /*isVariadic=*/false, getFunctionTypeAttrName().getValue(),
                                                    getArgAttrsAttrName(), getResAttrsAttrName());
 }
 
@@ -252,8 +248,7 @@ ParseResult AssignOp::parse(OpAsmParser &parser, OperationState &result) {
         parser.parseOptionalAttrDict(result.attributes) || parser.parseColonType(type))
         return failure();
 
-    if (parser.resolveOperand(var, type, result.operands) ||
-        parser.resolveOperand(expr, type, result.operands))
+    if (parser.resolveOperand(var, type, result.operands) || parser.resolveOperand(expr, type, result.operands))
         return failure();
 
     result.addTypes(type);
@@ -263,20 +258,17 @@ ParseResult AssignOp::parse(OpAsmParser &parser, OperationState &result) {
 LogicalResult AssignOp::verify() {
     // 检查变量和表达式类型是否匹配
     if (getVar().getType() != getExpr().getType())
-        return emitOpError("变量类型 ")
-               << getVar().getType() << " 与表达式类型 " << getExpr().getType() << " 不匹配";
+        return emitOpError("变量类型 ") << getVar().getType() << " 与表达式类型 " << getExpr().getType() << " 不匹配";
 
     // 检查结果类型是否与变量类型匹配
     if (getResult().getType() != getVar().getType())
-        return emitOpError("结果类型 ")
-               << getResult().getType() << " 与变量类型 " << getVar().getType() << " 不匹配";
+        return emitOpError("结果类型 ") << getResult().getType() << " 与变量类型 " << getVar().getType() << " 不匹配";
 
     return success();
 }
 
-LogicalResult AssignOp::inferReturnTypes(MLIRContext *context, std::optional<Location> location,
-                                         ValueRange operands, DictionaryAttr attributes,
-                                         RegionRange regions,
+LogicalResult AssignOp::inferReturnTypes(MLIRContext *context, std::optional<Location> location, ValueRange operands,
+                                         DictionaryAttr attributes, RegionRange regions,
                                          SmallVectorImpl<Type> &inferredReturnTypes) {
     // 确保有两个操作数
     if (operands.size() != 2)
@@ -294,265 +286,372 @@ LogicalResult AssignOp::inferReturnTypes(MLIRContext *context, std::optional<Loc
 }
 
 //===----------------------------------------------------------------------===//
-// CompoundStmtOp
+// CmpOp
 //===----------------------------------------------------------------------===//
 
-void Cminusf_CompoundStmtOp::build(OpBuilder &builder, OperationState &state) { state.addRegion(); }
-
-static void print(OpAsmPrinter &printer, Cminusf_CompoundStmtOp op) {
-    printer << "cminusf.compound";
-    printer.printRegion(op.getBody(), false, true);
+/// 从字符串获取谓词枚举值
+CmpPredicate CmpOp::stringToCmpPredicate(StringRef str) {
+    return llvm::StringSwitch<CmpPredicate>(str)
+        .Case("eq", CmpPredicate::eq)
+        .Case("ne", CmpPredicate::ne)
+        .Case("lt", CmpPredicate::lt)
+        .Case("le", CmpPredicate::le)
+        .Case("gt", CmpPredicate::gt)
+        .Case("ge", CmpPredicate::ge)
+        .Default(CmpPredicate::eq);
 }
 
-static ParseResult parseCminusfCompoundStmtOp(OpAsmParser &parser, OperationState &result) {
-    auto *body = result.addRegion();
-    if (parser.parseRegion(*body, /*arguments=*/{}, /*argTypes=*/{}))
-        return failure();
-    return success();
-}
-
-static LogicalResult verify(Cminusf_CompoundStmtOp op) { return success(); }
-
-//===----------------------------------------------------------------------===//
-// ExpressionStmtOp
-//===----------------------------------------------------------------------===//
-
-void Cminusf_ExpressionStmtOp::build(OpBuilder &builder, OperationState &state, Value expr) {
-    state.addOperands(expr);
-}
-
-static void print(OpAsmPrinter &printer, Cminusf_ExpressionStmtOp op) {
-    printer << "cminusf.exprstmt ";
-    printer.printOperand(op.getOperands().front());
-}
-
-static ParseResult parseCminusfExpressionStmtOp(OpAsmParser &parser, OperationState &result) {
-    OpAsmParser::OperandType expr;
-    Type type;
-    if (parser.parseOperand(expr) || parser.parseColonType(type) ||
-        parser.resolveOperand(expr, type, result.operands))
-        return failure();
-    return success();
-}
-
-static LogicalResult verify(Cminusf_ExpressionStmtOp op) { return success(); }
-
-//===----------------------------------------------------------------------===//
-// SelectionStmtOp
-//===----------------------------------------------------------------------===//
-
-void Cminusf_SelectionStmtOp::build(OpBuilder &builder, OperationState &state, Value cond,
-                                    Value then, Optional<Value> elseOp) {
-    state.addOperands(cond);
-    state.addOperands(then);
-    if (elseOp.hasValue())
-        state.addOperands(elseOp.getValue());
-}
-
-static void print(OpAsmPrinter &printer, Cminusf_SelectionStmtOp op) {
-    printer << "cminusf.if ";
-    printer.printOperand(op.getOperands().front());
-    printer << " : ";
-    printer.printOperand(op.getOperands()[1]);
-    if (op.getNumOperands() == 3) {
-        printer << " else ";
-        printer.printOperand(op.getOperands()[2]);
+/// 获取谓词的反向谓词
+CmpPredicate CmpOp::getInversePredicate() {
+    switch (getPredicate()) {
+    case CmpPredicate::eq:
+        return CmpPredicate::ne;
+    case CmpPredicate::ne:
+        return CmpPredicate::eq;
+    case CmpPredicate::lt:
+        return CmpPredicate::ge;
+    case CmpPredicate::le:
+        return CmpPredicate::gt;
+    case CmpPredicate::gt:
+        return CmpPredicate::le;
+    case CmpPredicate::ge:
+        return CmpPredicate::lt;
     }
+    llvm_unreachable("未知的比较谓词");
 }
 
-static ParseResult parseCminusfSelectionStmtOp(OpAsmParser &parser, OperationState &result) {
-    OpAsmParser::OperandType cond, then, elseOp;
-    Type type;
-    if (parser.parseOperand(cond) || parser.parseColonType(type) ||
-        parser.resolveOperand(cond, type, result.operands) || parser.parseOperand(then) ||
-        parser.parseColonType(type) || parser.resolveOperand(then, type, result.operands))
+/// 检查两个操作数是否为同一类型
+bool CmpOp::isSameOperandsType() { return getLhs().getType() == getRhs().getType(); }
+
+void CmpOp::print(OpAsmPrinter &printer) {
+    // 打印谓词和操作数
+    printer << " " << getPredicateAttr().getValue().str();
+    printer << " " << getLhs() << ", " << getRhs();
+
+    // 打印类型
+    printer << " : " << getLhs().getType();
+}
+
+ParseResult CmpOp::parse(OpAsmParser &parser, OperationState &result) {
+    // 解析谓词关键字
+    StringRef predicateStr;
+    if (parser.parseKeyword(&predicateStr))
         return failure();
-    if (!parser.parseOptionalKeyword("else")) {
-        if (parser.parseOperand(elseOp) || parser.parseColonType(type) ||
-            parser.resolveOperand(elseOp, type, result.operands))
+
+    // 解析操作数
+    OpAsmParser::UnresolvedOperand lhs, rhs;
+    if (parser.parseOperand(lhs) || parser.parseComma() || parser.parseOperand(rhs))
+        return failure();
+
+    // 解析类型
+    Type operandType;
+    if (parser.parseColonType(operandType))
+        return failure();
+
+    // 验证类型是否为 f32 或 i32
+    if (!operandType.isF32() && !operandType.isInteger(32))
+        return parser.emitError(parser.getNameLoc(), "操作数类型必须是 f32 或 i32");
+
+    // 将谓词字符串转换为枚举并添加为属性
+    CmpPredicate predicate = stringToCmpPredicate(predicateStr);
+    result.addAttribute("predicate", CmpPredicateAttr::get(parser.getContext(), predicate));
+
+    // 解析操作数，确保它们具有相同的类型
+    if (parser.resolveOperand(lhs, operandType, result.operands) ||
+        parser.resolveOperand(rhs, operandType, result.operands))
+        return failure();
+
+    // 添加结果类型（始终为 i32）
+    result.addTypes(parser.getBuilder().getI32Type());
+
+    return success();
+}
+
+LogicalResult CmpOp::verify() {
+    // 验证操作数类型相同
+    if (!isSameOperandsType())
+        return emitOpError() << "操作数必须具有相同类型，但得到 " << getLhs().getType() << " 和 " << getRhs().getType();
+
+    // 验证操作数类型为 f32 或 i32
+    Type operandType = getLhs().getType();
+    if (!operandType.isF32() && !operandType.isInteger(32))
+        return emitOpError() << "操作数类型必须是 f32 或 i32，但得到 " << operandType;
+
+    return success();
+}
+
+LogicalResult CmpOp::inferReturnTypes(MLIRContext *context, Optional<Location> location, ValueRange operands,
+                                      DictionaryAttr attributes, RegionRange regions,
+                                      SmallVectorImpl<Type> &inferredReturnTypes) {
+
+    // 比较操作始终返回 i32 类型表示布尔结果
+    inferredReturnTypes.push_back(IntegerType::get(context, 32));
+    return success();
+}
+
+//===----------------------------------------------------------------------===//
+// BinaryOp
+//===----------------------------------------------------------------------===//
+
+/// 检查结果类型是否有效
+bool BinaryOp::hasValidResultType() {
+    Type lhsType = getLhs().getType();
+    Type rhsType = getRhs().getType();
+    Type resultType = getResult().getType();
+
+    // 对于加减法，操作数必须相同，结果必须与操作数相同
+    if (isAddOrSubOp()) {
+        if (lhsType != rhsType) {
+            return false; // 加减法操作数必须相同
+        }
+        return resultType == lhsType;
+    }
+    // 对于乘除法，如果操作数类型相同，结果应与操作数相同
+    // 如果操作数类型不同，结果必须是 f32
+    else if (isMulOrDivOp()) {
+        if (lhsType == rhsType) {
+            return resultType == lhsType;
+        } else {
+            return resultType.isF32();
+        }
+    }
+
+    return false; // 未知的操作类型
+}
+
+/// 将字符串转换为二元操作类型枚举
+BinaryOpType BinaryOp::stringToBinaryOpType(StringRef str) {
+    return llvm::StringSwitch<BinaryOpType>(str)
+        .Case("add", BinaryOpType::add)
+        .Case("sub", BinaryOpType::sub)
+        .Case("mul", BinaryOpType::mul)
+        .Case("div", BinaryOpType::div)
+        .Default(BinaryOpType::add); // 默认为加法
+}
+
+/// 获取操作类型的字符串表示
+StringRef BinaryOp::getOperationSymbol() {
+    switch (getOpType()) {
+    case BinaryOpType::add:
+        return "+";
+    case BinaryOpType::sub:
+        return "-";
+    case BinaryOpType::mul:
+        return "*";
+    case BinaryOpType::div:
+        return "/";
+    }
+    llvm_unreachable("未知的二元操作类型");
+}
+
+/// 自定义打印方法
+void BinaryOp::print(OpAsmPrinter &printer) {
+    // 打印操作类型
+    printer << " ";
+    printer << getOpTypeAttr().getValue().str() << ", ";
+
+    // 打印操作数
+    printer << getLhs() << ", " << getRhs();
+
+    // 打印结果类型（只打印一个类型）
+    printer << " : " << getResult().getType();
+}
+
+/// 自定义解析方法
+ParseResult BinaryOp::parse(OpAsmParser &parser, OperationState &result) {
+    // 解析操作类型枚举字符串
+    StringRef opTypeStr;
+    if (parser.parseKeyword(&opTypeStr) || parser.parseComma())
+        return failure();
+
+    // 将操作类型转换为枚举并添加到属性
+    auto opType = BinaryOp::stringToBinaryOpType(opTypeStr);
+    auto attr = BinaryOpTypeAttr::get(parser.getContext(), opType);
+    result.addAttribute("op_type", attr);
+
+    // 解析操作数
+    OpAsmParser::UnresolvedOperand lhs, rhs;
+    if (parser.parseOperand(lhs) || parser.parseComma() || parser.parseOperand(rhs))
+        return failure();
+
+    // 解析结果类型
+    Type resultType;
+    if (parser.parseColonType(resultType))
+        return failure();
+
+    // 确保结果类型是 f32 或 i32
+    if (!resultType.isF32() && !resultType.isInteger(32))
+        return parser.emitError(parser.getNameLoc(), "结果类型必须是 f32 或 i32");
+
+    bool isAddSubOp = (opType == BinaryOpType::add || opType == BinaryOpType::sub);
+
+    // 对于加减法，所有操作数必须同类型
+    if (isAddSubOp) {
+        if (parser.resolveOperand(lhs, resultType, result.operands) ||
+            parser.resolveOperand(rhs, resultType, result.operands))
             return failure();
     }
-    return success();
-}
+    // 对于乘除法，如果结果是 f32，操作数可以不同类型
+    else {
+        // 对于操作数，我们需要接受 i32 或 f32
+        if (resultType.isF32()) {
+            // 如果结果是 f32，则操作数可以是 i32 或 f32
+            Type lhsType, rhsType;
+            if (parser.parseOptionalColon()) {
+                // 没有指定操作数类型，默认与结果相同
+                lhsType = rhsType = resultType;
+            } else {
+                // 解析操作数类型
+                if (parser.parseType(lhsType))
+                    return failure();
 
-static LogicalResult verify(Cminusf_SelectionStmtOp op) { return success(); }
+                if (parser.parseOptionalComma()) {
+                    // 只有一个类型，两个操作数使用相同类型
+                    rhsType = lhsType;
+                } else {
+                    if (parser.parseType(rhsType))
+                        return failure();
+                }
+            }
 
-//===----------------------------------------------------------------------===//
-// IterationStmtOp
-//===----------------------------------------------------------------------===//
+            // 验证操作数类型是否合法
+            if ((!lhsType.isF32() && !lhsType.isInteger(32)) || (!rhsType.isF32() && !rhsType.isInteger(32)))
+                return parser.emitError(parser.getNameLoc(), "操作数类型必须是 f32 或 i32");
 
-void Cminusf_IterationStmtOp::build(OpBuilder &builder, OperationState &state, Value cond,
-                                    Value body) {
-    state.addOperands(cond);
-    state.addOperands(body);
-}
-
-static void print(OpAsmPrinter &printer, Cminusf_IterationStmtOp op) {
-    printer << "cminusf.while ";
-    printer.printOperand(op.getOperands().front());
-    printer << " : ";
-    printer.printOperand(op.getOperands()[1]);
-}
-
-static ParseResult parseCminusfIterationStmtOp(OpAsmParser &parser, OperationState &result) {
-    OpAsmParser::OperandType cond, body;
-    Type type;
-    if (parser.parseOperand(cond) || parser.parseColonType(type) ||
-        parser.resolveOperand(cond, type, result.operands) || parser.parseOperand(body) ||
-        parser.parseColonType(type) || parser.resolveOperand(body, type, result.operands))
-        return failure();
-    return success();
-}
-
-static LogicalResult verify(Cminusf_IterationStmtOp op) { return success(); }
-
-//===----------------------------------------------------------------------===//
-// AssignOp
-//===----------------------------------------------------------------------===//
-
-void Cminusf_AssignOp::build(OpBuilder &builder, OperationState &state, Value var, Value expr) {
-    auto varType = var.getType();
-    auto exprType = expr.getType();
-
-    // 确保变量类型和表达式类型匹配
-    if (varType != exprType) {
-        emitError("变量类型 ") << varType << " 与表达式类型 " << exprType << " 不匹配";
+            // 解析操作数
+            if (parser.resolveOperand(lhs, lhsType, result.operands) ||
+                parser.resolveOperand(rhs, rhsType, result.operands))
+                return failure();
+        } else {
+            // 如果结果是 i32，则操作数必须是 i32
+            if (parser.resolveOperand(lhs, resultType, result.operands) ||
+                parser.resolveOperand(rhs, resultType, result.operands))
+                return failure();
+        }
     }
 
-    // 设置操作的类型
-    state.addTypes(varType);
-    state.addOperands({var, expr});
-}
+    // 设置结果类型
+    result.addTypes(resultType);
 
-//===----------------------------------------------------------------------===//
-// SimpleOp
-//===----------------------------------------------------------------------===//
-
-void Cminusf_SimpleOp::build(OpBuilder &builder, OperationState &state, Value lhs, Value rhs,
-                             int32_t op) {
-    state.addOperands(lhs);
-    state.addOperands(rhs);
-    state.addAttribute("op", builder.getI32IntegerAttr(op));
-    state.addTypes(lhs.getType());
-}
-
-static void print(OpAsmPrinter &printer, Cminusf_SimpleOp op) {
-    printer << "cminusf.simple ";
-    printer.printOperand(op.getOperands().front());
-    printer << " " << op.op() << " ";
-    printer.printOperand(op.getOperands()[1]);
-}
-
-static ParseResult parseCminusfSimpleOp(OpAsmParser &parser, OperationState &result) {
-    OpAsmParser::OperandType lhs, rhs;
-    IntegerAttr opAttr;
-    Type type;
-    if (parser.parseOperand(lhs) || parser.parseOperand(rhs) ||
-        parser.parseAttribute(opAttr, "op", result.attributes) || parser.parseColonType(type) ||
-        parser.resolveOperands({lhs, rhs}, type, result.operands))
-        return failure();
-    result.addTypes(type);
     return success();
 }
 
-static LogicalResult verify(Cminusf_SimpleOp op) { return success(); }
+/// 自定义验证方法
+LogicalResult BinaryOp::verify() {
+    // 获取操作数和结果类型
+    Type lhsType = getLhs().getType();
+    Type rhsType = getRhs().getType();
+    Type resultType = getResult().getType();
 
-//===----------------------------------------------------------------------===//
-// AdditiveOp
-//===----------------------------------------------------------------------===//
+    // 验证操作数类型为 f32 或 i32
+    if (!lhsType.isF32() && !lhsType.isInteger(32))
+        return emitOpError() << "左操作数类型必须是 f32 或 i32，但得到 " << lhsType;
 
-void Cminusf_AdditiveOp::build(OpBuilder &builder, OperationState &state, Value lhs, Value rhs,
-                               int32_t op) {
-    state.addOperands(lhs);
-    state.addOperands(rhs);
-    state.addAttribute("op", builder.getI32IntegerAttr(op));
-    state.addTypes(lhs.getType());
-}
+    if (!rhsType.isF32() && !rhsType.isInteger(32))
+        return emitOpError() << "右操作数类型必须是 f32 或 i32，但得到 " << rhsType;
 
-static void print(OpAsmPrinter &printer, Cminusf_AdditiveOp op) {
-    printer << "cminusf.additive ";
-    printer.printOperand(op.getOperands().front());
-    printer << " " << op.op() << " ";
-    printer.printOperand(op.getOperands()[1]);
-}
+    // 加减法专用验证
+    if (isAddOrSubOp()) {
+        if (lhsType != rhsType)
+            return emitOpError() << getOpTypeAttr().getValue().str() << " 操作要求操作数类型相同，但得到 " << lhsType
+                                 << " 和 " << rhsType;
 
-static ParseResult parseCminusfAdditiveOp(OpAsmParser &parser, OperationState &result) {
-    OpAsmParser::OperandType lhs, rhs;
-    IntegerAttr opAttr;
-    Type type;
-    if (parser.parseOperand(lhs) || parser.parseOperand(rhs) ||
-        parser.parseAttribute(opAttr, "op", result.attributes) || parser.parseColonType(type) ||
-        parser.resolveOperands({lhs, rhs}, type, result.operands))
-        return failure();
-    result.addTypes(type);
+        if (resultType != lhsType)
+            return emitOpError() << getOpTypeAttr().getValue().str() << " 操作的结果类型必须与操作数类型相同，但得到 "
+                                 << resultType << " 而不是 " << lhsType;
+    }
+
+    // 乘除法专用验证
+    if (isMulOrDivOp()) {
+        if (lhsType == rhsType) {
+            // 相同类型操作数，结果必须相同
+            if (resultType != lhsType)
+                return emitOpError() << getOpTypeAttr().getValue().str()
+                                     << " 操作中，相同类型操作数的结果类型必须相同，但得到 " << resultType << " 而不是 "
+                                     << lhsType;
+        } else {
+            // 不同类型操作数，结果必须是 f32
+            if (!resultType.isF32())
+                return emitOpError() << getOpTypeAttr().getValue().str()
+                                     << " 操作中，不同类型操作数的结果类型必须是 f32，但得到 " << resultType;
+        }
+    }
+    // 乘除法专用验证
+    if (isMulOrDivOp()) {
+        if (lhsType == rhsType) {
+            // 相同类型操作数，结果必须相同
+            if (resultType != lhsType)
+                return emitOpError() << getOpTypeAttr().getValue().str()
+                                     << " 操作中，相同类型操作数的结果类型必须相同，但得到 " << resultType << " 而不是 "
+                                     << lhsType;
+        } else {
+            // 不同类型操作数，结果必须是 f32
+            if (!resultType.isF32())
+                return emitOpError() << getOpTypeAttr().getValue().str()
+                                     << " 操作中，不同类型操作数的结果类型必须是 f32，但得到 " << resultType;
+        }
+    }
+
+    // 如果是整数除法，可以添加额外警告或检查
+    if (getOpType() == BinaryOpType::div && lhsType.isInteger(32) && rhsType.isInteger(32)) {
+        // 可以添加除零检查的警告（如果是常量操作数）
+        // 或者其他特定于除法的验证
+    }
+
     return success();
 }
 
-static LogicalResult verify(Cminusf_AdditiveOp op) { return success(); }
+/// 类型推断方法
+LogicalResult BinaryOp::inferReturnTypes(MLIRContext *context, Optional<Location> location, ValueRange operands,
+                                         DictionaryAttr attributes, RegionRange regions,
+                                         SmallVectorImpl<Type> &inferredReturnTypes) {
 
-//===----------------------------------------------------------------------===//
-// TermOp
-//===----------------------------------------------------------------------===//
+    // 确保有两个操作数
+    if (operands.size() != 2)
+        return emitOptionalError(location, "期望两个操作数");
 
-void Cminusf_TermOp::build(OpBuilder &builder, OperationState &state, Value lhs, Value rhs,
-                           int32_t op) {
-    state.addOperands(lhs);
-    state.addOperands(rhs);
-    state.addAttribute("op", builder.getI32IntegerAttr(op));
-    state.addTypes(lhs.getType());
-}
+    // 获取操作数类型
+    Type lhsType = operands[0].getType();
+    Type rhsType = operands[1].getType();
 
-static void print(OpAsmPrinter &printer, Cminusf_TermOp op) {
-    printer << "cminusf.term ";
-    printer.printOperand(op.getOperands().front());
-    printer << " " << op.op() << " ";
-    printer.printOperand(op.getOperands()[1]);
-}
+    // 验证操作数类型为 f32 或 i32
+    if (!lhsType.isF32() && !lhsType.isInteger(32))
+        return emitOptionalError(location, "左操作数类型必须是 f32 或 i32");
 
-static ParseResult parseCminusfTermOp(OpAsmParser &parser, OperationState &result) {
-    OpAsmParser::OperandType lhs, rhs;
-    IntegerAttr opAttr;
-    Type type;
-    if (parser.parseOperand(lhs) || parser.parseOperand(rhs) ||
-        parser.parseAttribute(opAttr, "op", result.attributes) || parser.parseColonType(type) ||
-        parser.resolveOperands({lhs, rhs}, type, result.operands))
-        return failure();
-    result.addTypes(type);
+    if (!rhsType.isF32() && !rhsType.isInteger(32))
+        return emitOptionalError(location, "右操作数类型必须是 f32 或 i32");
+
+    // 获取操作类型属性
+    auto opTypeAttr = attributes.get("op_type");
+    if (!opTypeAttr)
+        return emitOptionalError(location, "缺少必需的'op_type'属性");
+
+    auto intAttr = opTypeAttr.dyn_cast<mlir::IntegerAttr>();
+    if (!intAttr)
+        return emitOptionalError(location, "'op_type'属性必须是整数");
+
+    BinaryOpType opType = static_cast<BinaryOpType>(intAttr.getInt());
+    bool isAddSubOp = (opType == BinaryOpType::add || opType == BinaryOpType::sub);
+
+    // 应用类型推断规则
+    if (isAddSubOp) {
+        // 加减法：操作数必须类型相同，结果与操作数相同
+        if (lhsType != rhsType)
+            return emitOptionalError(location, "加减操作的操作数类型必须相同");
+
+        inferredReturnTypes.push_back(lhsType);
+    } else {
+        // 乘除法：如果操作数类型相同，结果与操作数相同
+        // 如果操作数类型不同，结果为 f32
+        if (lhsType == rhsType) {
+            inferredReturnTypes.push_back(lhsType);
+        } else {
+            inferredReturnTypes.push_back(FloatType::getF32(context));
+        }
+    }
+
     return success();
 }
-
-static LogicalResult verify(Cminusf_TermOp op) { return success(); }
-
-//===----------------------------------------------------------------------===//
-// CallOp
-//===----------------------------------------------------------------------===//
-
-void Cminusf_CallOp::build(OpBuilder &builder, OperationState &state, StringRef name,
-                           ArrayRef<Value> args) {
-    state.addAttribute("name", builder.getStringAttr(name));
-    state.addOperands(args);
-    state.addTypes(builder.getI32Type());
-}
-
-static void print(OpAsmPrinter &printer, Cminusf_CallOp op) {
-    printer << "cminusf.call " << op.name() << "(";
-    printer.printOperands(op.getOperands());
-    printer << ")";
-}
-
-static ParseResult parseCminusfCallOp(OpAsmParser &parser, OperationState &result) {
-    StringAttr nameAttr;
-    SmallVector<OpAsmParser::OperandType, 4> args;
-    Type type;
-    if (parser.parseAttribute(nameAttr, "name", result.attributes) ||
-        parser.parseOperandList(args) || parser.parseColonType(type) ||
-        parser.resolveOperands(args, type, result.operands))
-        return failure();
-    result.addTypes(type);
-    return success();
-}
-
-static LogicalResult verify(Cminusf_CallOp op) { return success(); }
 
 #define GET_OP_CLASSES
 #include "mlir/CminusfOps.cpp.inc"

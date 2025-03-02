@@ -6,6 +6,7 @@ include "mlir/IR/FunctionInterfaces.td"
 include "mlir/IR/SymbolInterfaces.td"
 include "mlir/Interfaces/SideEffectInterfaces.td"
 include "mlir/Interfaces/InferTypeOpInterface.td"
+include "mlir/IR/EnumAttr.td"
 
 def Cminusf_Dialect : Dialect {
   let name = "cminusf";
@@ -201,109 +202,202 @@ def Cminusf_AssignOp : Cminusf_Op<"assign", [DeclareOpInterfaceMethods<InferType
   }];
 }
 
-// // 首先，在文件开头定义比较谓词枚举
-// def Cminusf_CmpPredicateEQ : I32EnumAttrCase<"eq", 0>;
-// def Cminusf_CmpPredicateNE : I32EnumAttrCase<"ne", 1>;
-// def Cminusf_CmpPredicateLT : I32EnumAttrCase<"lt", 2>;
-// def Cminusf_CmpPredicateLE : I32EnumAttrCase<"le", 3>;
-// def Cminusf_CmpPredicateGT : I32EnumAttrCase<"gt", 4>;
-// def Cminusf_CmpPredicateGE : I32EnumAttrCase<"ge", 5>;
+// 首先，在文件开头定义比较谓词枚举
+def Cminusf_CmpPredicateEQ : I32EnumAttrCase<"eq", 0>;
+def Cminusf_CmpPredicateNE : I32EnumAttrCase<"ne", 1>;
+def Cminusf_CmpPredicateLT : I32EnumAttrCase<"lt", 2>;
+def Cminusf_CmpPredicateLE : I32EnumAttrCase<"le", 3>;
+def Cminusf_CmpPredicateGT : I32EnumAttrCase<"gt", 4>;
+def Cminusf_CmpPredicateGE : I32EnumAttrCase<"ge", 5>;
 
-// def Cminusf_CmpPredicate : I32EnumAttr<"CmpPredicate", "comparison predicate",
-//   [Cminusf_CmpPredicateEQ, Cminusf_CmpPredicateNE, Cminusf_CmpPredicateLT, 
-//    Cminusf_CmpPredicateLE, Cminusf_CmpPredicateGT, Cminusf_CmpPredicateGE]> {
-//   let cppNamespace = "::cminusf::mlir";
-// }
+def Cminusf_CmpPredicate : I32EnumAttr<"CmpPredicate", "comparison predicate",
+  [Cminusf_CmpPredicateEQ, Cminusf_CmpPredicateNE, Cminusf_CmpPredicateLT, 
+   Cminusf_CmpPredicateLE, Cminusf_CmpPredicateGT, Cminusf_CmpPredicateGE]> {
+  let cppNamespace = "::cminusf::mlir";
+}
 
-// /// 比较运算
-// def Cminusf_CmpOp : Cminusf_Op<"cmp", [Pure, DeclareOpInterfaceMethods<InferTypeOpInterface>]> {
-//   let summary = "Comparison operation";
-//   let description = [{
-//     Performs a comparison operation like ==, !=, <, >, <=, >=.
+/// 比较运算
+def Cminusf_CmpOp : Cminusf_Op<"cmp", [Pure, DeclareOpInterfaceMethods<InferTypeOpInterface>]> {
+  let summary = "Comparison operation";
+  let description = [{
+    Performs a comparison operation like ==, !=, <, >, <=, >=.
     
-//     The operation takes two operands of the same type (either f32 or i32)
-//     and returns an i32 result (1 for true, 0 for false).
+    The operation takes two operands of the same type (either f32 or i32)
+    and returns an i32 result (1 for true, 0 for false).
     
-//     Example:
-//     ```mlir
-//     %result = cminusf.cmp eq %lhs, %rhs : i32
-//     %result = cminusf.cmp lt %lhs, %rhs : f32
-//     ```
+    Example:
+    ```mlir
+    %result = cminusf.cmp eq %lhs, %rhs : i32
+    %result = cminusf.cmp lt %lhs, %rhs : f32
+    ```
     
-//     Available predicates:
-//     - eq: equal (==)
-//     - ne: not equal (!=)
-//     - lt: less than (<)
-//     - le: less than or equal (<=)
-//     - gt: greater than (>)
-//     - ge: greater than or equal (>=)
-//   }];
+    Available predicates:
+    - eq: equal (==)
+    - ne: not equal (!=)
+    - lt: less than (<)
+    - le: less than or equal (<=)
+    - gt: greater than (>)
+    - ge: greater than or equal (>=)
+  }];
 
-//   let arguments = (ins AnyTypeOf<[F32, I32]>:$lhs, 
-//                        AnyTypeOf<[F32, I32]>:$rhs,
-//                        Cminusf_CmpPredicate:$predicate);
+  let arguments = (ins AnyTypeOf<[F32, I32]>:$lhs,
+                       AnyTypeOf<[F32, I32]>:$rhs,
+                       Cminusf_CmpPredicate:$predicate);
   
-//   let results = (outs I32:$result);
+  let results = (outs I32:$result);
   
-//   // 添加自定义验证
-//   let hasVerifier = 1;
+  // 添加自定义验证
+  let hasVerifier = 1;
   
-//   // 添加自定义汇编格式
-//   let hasCustomAssemblyFormat = 1;
+  // 添加自定义汇编格式
+  let hasCustomAssemblyFormat = 1;
   
-//   // 为构建器添加方便的方法
-//   let builders = [
-//     OpBuilder<(ins "Value":$lhs, "Value":$rhs, "CmpPredicate":$predicate), [{
-//       build($_builder, $_state, $_builder.getI32Type(), lhs, rhs, 
-//             CmpPredicateAttr::get($_builder.getContext(), predicate));
-//     }]>,
-//     OpBuilder<(ins "Value":$lhs, "Value":$rhs, "StringRef":$predicate), [{
-//       build($_builder, $_state, $_builder.getI32Type(), lhs, rhs, 
-//             CmpPredicateAttr::get($_builder.getContext(), 
-//               stringToCmpPredicate(predicate)));
-//     }]>
-//   ];
+  // 为构建器添加方便的方法
+  let builders = [
+    OpBuilder<(ins "Value":$lhs, "Value":$rhs, "CmpPredicate":$predicate), [{
+      build($_builder, $_state, $_builder.getI32Type(), lhs, rhs, 
+            CmpPredicateAttr::get($_builder.getContext(), predicate));
+    }]>,
+    OpBuilder<(ins "Value":$lhs, "Value":$rhs, "StringRef":$predicate), [{
+      build($_builder, $_state, $_builder.getI32Type(), lhs, rhs, 
+            CmpPredicateAttr::get($_builder.getContext(), 
+              stringToCmpPredicate(predicate)));
+    }]>
+  ];
   
-//   // 添加额外方法
-//   let extraClassDeclaration = [{
-//     /// 从字符串获取谓词
-//     static CmpPredicate stringToCmpPredicate(StringRef str);
+  // 添加额外方法
+  let extraClassDeclaration = [{
+    /// 从字符串获取谓词
+    static CmpPredicate stringToCmpPredicate(StringRef str);
     
-//     /// 获取谓词的反向谓词（例如：lt 的反向是 ge）
-//     CmpPredicate getInversePredicate();
+    /// 获取谓词的反向谓词: lt 的反向是 ge
+    CmpPredicate getInversePredicate();
     
-//     /// 检查两个操作数是否为同一类型
-//     bool isSameOperandsType();
-//   }];
-// }
+    /// 检查两个操作数是否为同一类型
+    bool isSameOperandsType();
+  }];
+}
 
 /// 算术运算 (+, -, *, /)
-def Cminusf_AddOp : Cminusf_Op<"add", [Pure]> {
-  let summary = "Addition operation";
-  let description = [{ Performs addition of two values. }];
-  let arguments = (ins AnyTypeOf<[F32, I32]>:$lhs, AnyTypeOf<[F32, I32]>:$rhs);
-  let results = (outs AnyTypeOf<[F32, I32]>:$result);
+// 定义二元操作类型枚举
+def Cminusf_BinaryOpTypeAdd : I32EnumAttrCase<"add", 0>;
+def Cminusf_BinaryOpTypeSub : I32EnumAttrCase<"sub", 1>;
+def Cminusf_BinaryOpTypeMul : I32EnumAttrCase<"mul", 2>;
+def Cminusf_BinaryOpTypeDiv : I32EnumAttrCase<"div", 3>;
+
+def Cminusf_BinaryOpType : I32EnumAttr<"BinaryOpType", "Binary operation type",
+  [Cminusf_BinaryOpTypeAdd, Cminusf_BinaryOpTypeSub, Cminusf_BinaryOpTypeMul, Cminusf_BinaryOpTypeDiv]> {
+  let cppNamespace = "::cminusf::mlir";
 }
 
-def Cminusf_SubOp : Cminusf_Op<"sub", [Pure]> {
-  let summary = "Subtraction operation";
-  let description = [{ Performs subtraction of two values. }];
-  let arguments = (ins AnyTypeOf<[F32, I32]>:$lhs, AnyTypeOf<[F32, I32]>:$rhs);
+def Cminusf_BinaryOp : Cminusf_Op<"binary", [
+    Pure,
+    DeclareOpInterfaceMethods<InferTypeOpInterface>
+  ]> {
+  
+  let summary = "Binary operation";
+  let description = [{
+    Performs binary operations (add, sub, mul, div) on two values.
+    
+    The operation type is specified as the first argument.
+    
+    Type rules:
+    - For add and sub: Both operands must have the same type (either f32 or i32).
+      The result will have that same type.
+    - For mul and div: 
+      * If operands have the same type, the result will have that same type.
+      * If operands have different types, the result will be f32.
+    
+    Example:
+    ```mlir
+    // Addition (same type operands)
+    %result = cminusf.binary add, %a, %b : i32
+    
+    // Subtraction (same type operands)
+    %result = cminusf.binary sub, %a, %b : f32
+    
+    // Multiplication (same or different type operands)
+    %result = cminusf.binary mul, %a, %b : i32
+    
+    // Division (using mixed types will produce f32 internally)
+    %result = cminusf.binary div, %a, %f : f32
+    ```
+  }];
+  
+  let arguments = (ins 
+      Cminusf_BinaryOpType:$op_type,
+      AnyTypeOf<[F32, I32]>:$lhs,
+      AnyTypeOf<[F32, I32]>:$rhs
+  );
+  
   let results = (outs AnyTypeOf<[F32, I32]>:$result);
-}
-
-def Cminusf_MulOp : Cminusf_Op<"mul", [Pure]> {
-  let summary = "Multiplication operation";
-  let description = [{ Performs multiplication of two values. }];
-  let arguments = (ins AnyTypeOf<[F32, I32]>:$lhs, AnyTypeOf<[F32, I32]>:$rhs);
-  let results = (outs AnyTypeOf<[F32, I32]>:$result);
-}
-
-def Cminusf_DivOp : Cminusf_Op<"div", [Pure]> {
-  let summary = "Division operation";
-  let description = [{ Performs division of two values. }];
-  let arguments = (ins AnyTypeOf<[F32, I32]>:$lhs, AnyTypeOf<[F32, I32]>:$rhs);
-  let results = (outs AnyTypeOf<[F32, I32]>:$result);
+  
+  // 添加自定义验证
+  let hasVerifier = 1;
+  
+  // 添加自定义汇编格式 
+  let hasCustomAssemblyFormat = 1;
+  
+  // 为构建器添加方便的方法
+  let builders = [
+    // 基本构建器
+    OpBuilder<(ins "BinaryOpType":$op_type, "Value":$lhs, "Value":$rhs), [{
+      Type lhsType = lhs.getType();
+      Type rhsType = rhs.getType();
+      Type resultType;
+      
+      // 判断操作类型和应用相应的类型规则
+      if (op_type == BinaryOpType::add || op_type == BinaryOpType::sub) {
+        // 加减法: 操作数必须相同类型，结果与操作数相同
+        assert(lhsType == rhsType && "加减操作的操作数类型必须相同");
+        resultType = lhsType;
+      } else {
+        // 乘除法: 同类型时结果相同，不同类型时结果为f32
+        if (lhsType == rhsType) {
+          resultType = lhsType;
+        } else {
+          resultType = $_builder.getF32Type();
+        }
+      }
+      
+      build($_builder, $_state, resultType, op_type, lhs, rhs);
+    }]>,
+    
+    // 字符串构建器 - 从操作符字符串创建
+    OpBuilder<(ins "StringRef":$op_type_str, "Value":$lhs, "Value":$rhs), [{
+      // 从字符串构建 - 转换操作类型字符串为枚举
+      BinaryOpType op_type = stringToBinaryOpType(op_type_str);
+      
+      // 调用上面定义的构建器
+      build($_builder, $_state, op_type, lhs, rhs);
+    }]>
+  ];
+  
+  let extraClassDeclaration = [{
+    /// 检查两个操作数是否为同一类型
+    bool isSameOperandsType() {
+      return getLhs().getType() == getRhs().getType();
+    }
+    
+    /// 检查是否为加法或减法操作
+    bool isAddOrSubOp() {
+      return getOpType() == BinaryOpType::add || getOpType() == BinaryOpType::sub;
+    }
+    
+    /// 检查是否为乘法或除法操作
+    bool isMulOrDivOp() {
+      return getOpType() == BinaryOpType::mul || getOpType() == BinaryOpType::div;
+    }
+    
+    /// 检查结果类型是否有效
+    bool hasValidResultType();
+    
+    /// 将字符串转换为二元操作类型枚举
+    static BinaryOpType stringToBinaryOpType(StringRef str);
+    
+    /// 获取操作类型的字符串表示
+    StringRef getOperationSymbol();
+  }];
 }
 
 /// 选择语句 `if (cond) then else`
