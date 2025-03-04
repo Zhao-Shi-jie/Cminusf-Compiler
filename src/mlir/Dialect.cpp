@@ -8,8 +8,10 @@
 #include "mlir/IR/Diagnostics.h"
 #include "mlir/IR/FunctionImplementation.h"
 #include "mlir/IR/OpImplementation.h"
+#include "mlir/IR/Operation.h"
 #include "mlir/IR/Types.h"
 #include <cstdint>
+#include <string>
 
 using namespace mlir;
 using namespace mlir::cminusf;
@@ -32,86 +34,69 @@ void CminusfDialect::initialize() {
 // Cminusf Operations
 //===----------------------------------------------------------------------===//
 
-/// A generalized parser for binary operations. This parses the different forms
-/// of 'printBinaryOp' below.
-static mlir::ParseResult parseBinaryOp(mlir::OpAsmParser &parser, mlir::OperationState &result) {
-    SmallVector<mlir::OpAsmParser::UnresolvedOperand, 2> operands;
-    SMLoc operandsLoc = parser.getCurrentLocation();
-    Type type;
-    if (parser.parseOperandList(operands, /*requiredOperandCount=*/2) ||
-        parser.parseOptionalAttrDict(result.attributes) || parser.parseColonType(type))
-        return mlir::failure();
-
-    // If the type is a function type, it contains the input and result types of
-    // this operation.
-    if (FunctionType funcType = type.dyn_cast<FunctionType>()) {
-        if (parser.resolveOperands(operands, funcType.getInputs(), operandsLoc, result.operands))
-            return mlir::failure();
-        result.addTypes(funcType.getResults());
-        return mlir::success();
-    }
-
-    // Otherwise, the parsed type is the type of both operands and results.
-    if (parser.resolveOperands(operands, type, result.operands))
-        return mlir::failure();
-    result.addTypes(type);
-    return mlir::success();
-}
-
-/// A generalized printer for binary operations. It prints in two different
-/// forms depending on if all of the types match.
-static void printBinaryOp(mlir::OpAsmPrinter &printer, mlir::Operation *op) {
-    printer << " " << op->getOperands();
-    printer.printOptionalAttrDict(op->getAttrs());
-    printer << " : ";
-
-    // If all of the types are the same, print the type directly.
-    Type resultType = *op->result_type_begin();
-    if (llvm::all_of(op->getOperandTypes(), [=](Type type) { return type == resultType; })) {
-        printer << resultType;
-        return;
-    }
-
-    // Otherwise, print a functional type.
-    printer.printFunctionalType(op->getOperandTypes(), op->getResultTypes());
-}
-
 //===----------------------------------------------------------------------===//
 // ConstantOp
 //===----------------------------------------------------------------------===//
-// 支持 int32_t 和 float 的构建函数
-void ConstantOp::build(mlir::OpBuilder &builder, mlir::OperationState &state, int value) {
-    ConstantOp::build(builder, state, builder.getI32Type(), builder.getI32IntegerAttr(value));
-}
-void ConstantOp::build(mlir::OpBuilder &builder, mlir::OperationState &state, float value) {
-    ConstantOp::build(builder, state, builder.getF32Type(), builder.getF32FloatAttr(value));
+// // 支持 int32_t 和 float 的构建函数
+// void ConstantOp::build(mlir::OpBuilder &builder, mlir::OperationState &state, int value) {
+//     ConstantOp::build(builder, state, builder.getI32Type(), builder.getI32IntegerAttr(value));
+// }
+// void ConstantOp::build(mlir::OpBuilder &builder, mlir::OperationState &state, float value) {
+//     ConstantOp::build(builder, state, builder.getF32Type(), builder.getF32FloatAttr(value));
+// }
+
+void ConstantOp::print(OpAsmPrinter &p) {
+    // 打印结果类型和操作名称（这部分由 MLIR 框架处理）
+    // 格式会是 "%0 = cminusf.constant"
+
+    Attribute valueAttr = getValue();
+    p << " ";
+    if (auto intAttr = valueAttr.dyn_cast<IntegerAttr>()) {
+        p << intAttr.getInt();
+    } else if (auto floatAttr = valueAttr.dyn_cast<FloatAttr>()) {
+        p << floatAttr.getValue().convertToFloat();
+    } else {
+        p << valueAttr;
+    }
+    p << " : ";
+    p << getType();
 }
 
-mlir::ParseResult ConstantOp::parse(OpAsmParser &parser, OperationState &result) {
-    Attribute valueAttr;
+ParseResult ConstantOp::parse(OpAsmParser &parser, OperationState &result) {
+    // 解析结果类型
     Type type;
-    if (parser.parseAttribute(valueAttr, "value", result.attributes) || parser.parseColonType(type))
+    if (parser.parseType(type))
         return failure();
 
-    if (!valueAttr.isa<IntegerAttr>() && !valueAttr.isa<FloatAttr>()) {
-        return parser.emitError(parser.getNameLoc(), "expected integer or float attribute");
-    }
-    // 检查属性类型与结果类型是否一致
-    if (auto intAttr = valueAttr.dyn_cast<mlir::IntegerAttr>()) {
-        // 如果属性是整数，结果类型必须是 i32
-        if (!type.isInteger(32)) {
-            return parser.emitError(parser.getNameLoc())
-                   << "integer attribute requires i32 result type, but got " << type;
-        }
-    } else if (auto floatAttr = valueAttr.dyn_cast<mlir::FloatAttr>()) {
-        // 如果属性是浮点，结果类型必须是 f32
-        if (!type.isF32()) {
-            return parser.emitError(parser.getNameLoc())
-                   << "float attribute requires f32 result type, but got " << type;
-        }
+    // 将类型添加到结果中
+    result.addTypes(type);
+
+    // 解析常量值
+    if (type.isa<IntegerType>()) {
+        // 整数常量
+        APInt intValue;
+        if (parser.parseInteger(intValue))
+            return failure();
+
+        // 创建整数属性
+        auto valueAttr = IntegerAttr::get(type, intValue);
+        result.addAttribute("value", valueAttr);
+    } else if (type.isa<FloatType>()) {
+        // 浮点数常量
+        double floatValue;
+        if (parser.parseFloat(floatValue))
+            return failure();
+
+        // 创建浮点属性
+        auto valueAttr = FloatAttr::get(type, floatValue);
+        result.addAttribute("value", valueAttr);
+    } else {
+        // 其他类型，尝试直接解析属性
+        Attribute valueAttr;
+        if (parser.parseAttribute(valueAttr, "value", result.attributes))
+            return failure();
     }
 
-    result.addTypes(type);
     return success();
 }
 
@@ -126,22 +111,22 @@ mlir::LogicalResult ConstantOp::verify() {
 // VarDeclarationOp
 //===----------------------------------------------------------------------===//
 
-void VarDeclOp::build(mlir::OpBuilder &builder, mlir::OperationState &state, StringAttr var_name, Type var_type) {
-    state.addAttribute("var_name", var_name);
-    state.addAttribute("var_type_attr", TypeAttr::get(var_type));
-    // 结果类型与参数类型一致
-    state.addTypes(var_type);
-}
+// void VarDeclOp::build(mlir::OpBuilder &builder, mlir::OperationState &state, StringAttr var_name, Type var_type) {
+//     state.addAttribute("var_name", var_name);
+//     state.addAttribute("var_type_attr", TypeAttr::get(var_type));
+//     // 结果类型与参数类型一致
+//     state.addTypes(var_type);
+// }
 
-void VarDeclOp::build(mlir::OpBuilder &builder, mlir::OperationState &state, mlir::StringAttr var_name,
-                      mlir::Type var_type,
-                      /*optional*/ mlir::IntegerAttr size) {
-    state.addAttribute("var_name", var_name);
-    state.addAttribute("var_type_attr", TypeAttr::get(var_type));
-    state.addAttribute("size", size);
-    // 结果类型是 MemRef
-    state.addTypes(MemRefType::get({size.getInt()}, var_type));
-}
+// void VarDeclOp::build(mlir::OpBuilder &builder, mlir::OperationState &state, mlir::StringAttr var_name,
+//                       mlir::Type var_type,
+//                       /*optional*/ mlir::IntegerAttr size) {
+//     state.addAttribute("var_name", var_name);
+//     state.addAttribute("var_type_attr", TypeAttr::get(var_type));
+//     state.addAttribute("size", size);
+//     // 结果类型是 MemRef
+//     state.addTypes(MemRefType::get({size.getInt()}, var_type));
+// }
 
 LogicalResult VarDeclOp::verify() {
     // 获取基本类型
@@ -324,8 +309,31 @@ CmpPredicate CmpOp::getInversePredicate() {
 bool CmpOp::isSameOperandsType() { return getLhs().getType() == getRhs().getType(); }
 
 void CmpOp::print(OpAsmPrinter &printer) {
+    std::string logicalOp = "";
+    switch (getPredicateAttr().getValue()) {
+    case CmpPredicate::eq:
+        logicalOp = "eq";
+        break;
+    case CmpPredicate::ne:
+        logicalOp = "ne";
+        break;
+    case CmpPredicate::lt:
+        logicalOp = "lt";
+        break;
+    case CmpPredicate::le:
+        logicalOp = "le";
+        break;
+    case CmpPredicate::gt:
+        logicalOp = "gt";
+        break;
+    case CmpPredicate::ge:
+        logicalOp = "ge";
+        break;
+    default:
+        logicalOp = "unkonwn";
+    }
     // 打印谓词和操作数
-    printer << " " << getPredicateAttr().getValue().str();
+    printer << " " << logicalOp;
     printer << " " << getLhs() << ", " << getRhs();
 
     // 打印类型
@@ -380,14 +388,14 @@ LogicalResult CmpOp::verify() {
     return success();
 }
 
-LogicalResult CmpOp::inferReturnTypes(MLIRContext *context, Optional<Location> location, ValueRange operands,
-                                      DictionaryAttr attributes, RegionRange regions,
-                                      SmallVectorImpl<Type> &inferredReturnTypes) {
+// LogicalResult CmpOp::inferReturnTypes(MLIRContext *context, Optional<Location> location, ValueRange operands,
+//                                       DictionaryAttr attributes, RegionRange regions,
+//                                       SmallVectorImpl<Type> &inferredReturnTypes) {
 
-    // 比较操作始终返回 i32 类型表示布尔结果
-    inferredReturnTypes.push_back(IntegerType::get(context, 32));
-    return success();
-}
+//     // 比较操作始终返回 i32 类型表示布尔结果
+//     inferredReturnTypes.push_back(IntegerType::get(context, 32));
+//     return success();
+// }
 
 //===----------------------------------------------------------------------===//
 // BinaryOp
@@ -399,14 +407,14 @@ bool BinaryOp::hasValidResultType() {
     Type rhsType = getRhs().getType();
     Type resultType = getResult().getType();
 
-    // 对于加减法，操作数必须相同，结果必须与操作数相同
+    // 加减法，操作数必须相同，结果必须与操作数相同
     if (isAddOrSubOp()) {
         if (lhsType != rhsType) {
-            return false; // 加减法操作数必须相同
+            return false;
         }
         return resultType == lhsType;
     }
-    // 对于乘除法，如果操作数类型相同，结果应与操作数相同
+    // 乘除法，如果操作数类型相同，结果应与操作数相同
     // 如果操作数类型不同，结果必须是 f32
     else if (isMulOrDivOp()) {
         if (lhsType == rhsType) {
@@ -416,7 +424,7 @@ bool BinaryOp::hasValidResultType() {
         }
     }
 
-    return false; // 未知的操作类型
+    return false;
 }
 
 /// 将字符串转换为二元操作类型枚举
@@ -446,14 +454,26 @@ StringRef BinaryOp::getOperationSymbol() {
 
 /// 自定义打印方法
 void BinaryOp::print(OpAsmPrinter &printer) {
-    // 打印操作类型
+    std::string binaryOp = "";
+    switch (getOpTypeAttr().getValue()) {
+    case BinaryOpType::add:
+        binaryOp = "add";
+        break;
+    case BinaryOpType::sub:
+        binaryOp = "sub";
+        break;
+    case BinaryOpType::mul:
+        binaryOp = "mul";
+        break;
+    case BinaryOpType::div:
+        binaryOp = "div";
+        break;
+    default:
+        binaryOp = "unkonwn";
+    }
     printer << " ";
-    printer << getOpTypeAttr().getValue().str() << ", ";
-
-    // 打印操作数
+    printer << binaryOp << ", ";
     printer << getLhs() << ", " << getRhs();
-
-    // 打印结果类型（只打印一个类型）
     printer << " : " << getResult().getType();
 }
 
@@ -550,15 +570,31 @@ LogicalResult BinaryOp::verify() {
     if (!rhsType.isF32() && !rhsType.isInteger(32))
         return emitOpError() << "右操作数类型必须是 f32 或 i32，但得到 " << rhsType;
 
+    std::string binaryOp = "";
+    switch (getOpTypeAttr().getValue()) {
+    case BinaryOpType::add:
+        binaryOp = "add";
+        break;
+    case BinaryOpType::sub:
+        binaryOp = "sub";
+        break;
+    case BinaryOpType::mul:
+        binaryOp = "mul";
+        break;
+    case BinaryOpType::div:
+        binaryOp = "div";
+        break;
+    default:
+        binaryOp = "unkonwn";
+    }
     // 加减法专用验证
     if (isAddOrSubOp()) {
         if (lhsType != rhsType)
-            return emitOpError() << getOpTypeAttr().getValue().str() << " 操作要求操作数类型相同，但得到 " << lhsType
-                                 << " 和 " << rhsType;
+            return emitOpError() << binaryOp << " 操作要求操作数类型相同，但得到 " << lhsType << " 和 " << rhsType;
 
         if (resultType != lhsType)
-            return emitOpError() << getOpTypeAttr().getValue().str() << " 操作的结果类型必须与操作数类型相同，但得到 "
-                                 << resultType << " 而不是 " << lhsType;
+            return emitOpError() << binaryOp << " 操作的结果类型必须与操作数类型相同，但得到 " << resultType
+                                 << " 而不是 " << lhsType;
     }
 
     // 乘除法专用验证
@@ -566,36 +602,29 @@ LogicalResult BinaryOp::verify() {
         if (lhsType == rhsType) {
             // 相同类型操作数，结果必须相同
             if (resultType != lhsType)
-                return emitOpError() << getOpTypeAttr().getValue().str()
-                                     << " 操作中，相同类型操作数的结果类型必须相同，但得到 " << resultType << " 而不是 "
-                                     << lhsType;
+                return emitOpError() << binaryOp << " 操作中，相同类型操作数的结果类型必须相同，但得到 " << resultType
+                                     << " 而不是 " << lhsType;
         } else {
             // 不同类型操作数，结果必须是 f32
             if (!resultType.isF32())
-                return emitOpError() << getOpTypeAttr().getValue().str()
-                                     << " 操作中，不同类型操作数的结果类型必须是 f32，但得到 " << resultType;
-        }
-    }
-    // 乘除法专用验证
-    if (isMulOrDivOp()) {
-        if (lhsType == rhsType) {
-            // 相同类型操作数，结果必须相同
-            if (resultType != lhsType)
-                return emitOpError() << getOpTypeAttr().getValue().str()
-                                     << " 操作中，相同类型操作数的结果类型必须相同，但得到 " << resultType << " 而不是 "
-                                     << lhsType;
-        } else {
-            // 不同类型操作数，结果必须是 f32
-            if (!resultType.isF32())
-                return emitOpError() << getOpTypeAttr().getValue().str()
-                                     << " 操作中，不同类型操作数的结果类型必须是 f32，但得到 " << resultType;
+                return emitOpError() << binaryOp << " 操作中，不同类型操作数的结果类型必须是 f32，但得到 "
+                                     << resultType;
         }
     }
 
     // 如果是整数除法，可以添加额外警告或检查
-    if (getOpType() == BinaryOpType::div && lhsType.isInteger(32) && rhsType.isInteger(32)) {
-        // 可以添加除零检查的警告（如果是常量操作数）
-        // 或者其他特定于除法的验证
+    if (getOpType() == BinaryOpType::div) {
+        if (auto rhsOp = getRhs().getDefiningOp<ConstantOp>()) {
+            if (auto intValue = rhsOp.getValue().dyn_cast<IntegerAttr>()) {
+                if (intValue.getInt() == 0) {
+                    return emitOpError() << "除法操作的右操作数不能是整数0";
+                }
+            } else if (auto fpValue = rhsOp.getValue().dyn_cast<FloatAttr>()) {
+                if (fpValue.getValue().isZero()) {
+                    return emitOpError() << "除法操作的右操作数不能是浮点数0.0";
+                }
+            }
+        }
     }
 
     return success();
@@ -652,6 +681,96 @@ LogicalResult BinaryOp::inferReturnTypes(MLIRContext *context, Optional<Location
 
     return success();
 }
+
+//===----------------------------------------------------------------------===//
+// IfOp
+//===----------------------------------------------------------------------===//
+
+// 实现构建器方法
+void IfOp::build(OpBuilder &builder, OperationState &result, Value condition,
+                 function_ref<void(OpBuilder &, Location)> thenBuilder,
+                 function_ref<void(OpBuilder &, Location)> elseBuilder) {
+    result.addOperands(condition);
+
+    // 创建 then 区域
+    Region *thenRegion = result.addRegion();
+    Block *thenBlock = new Block();
+    thenRegion->push_back(thenBlock);
+
+    // 在 then 区域内使用给定的构建器函数
+    if (thenBuilder) {
+        OpBuilder::InsertionGuard guard(builder);
+        builder.setInsertionPointToStart(thenBlock);
+        thenBuilder(builder, result.location);
+    }
+
+    // 创建 else 区域
+    Region *elseRegion = result.addRegion();
+    Block *elseBlock = new Block();
+    elseRegion->push_back(elseBlock);
+
+    // 在 else 区域内使用给定的构建器函数
+    if (elseBuilder) {
+        OpBuilder::InsertionGuard guard(builder);
+        builder.setInsertionPointToStart(elseBlock);
+        elseBuilder(builder, result.location);
+    }
+}
+
+// YieldOp 构建器实现
+void YieldOp::build(OpBuilder &builder, OperationState &result) {
+    // 空实现，不需要添加任何内容
+}
+
+//===----------------------------------------------------------------------===//
+// WhileOp
+//===----------------------------------------------------------------------===//
+
+void WhileOp::build(OpBuilder &builder, OperationState &result, Value condition,
+                    function_ref<void(OpBuilder &, Location)> bodyBuilder) {
+    result.addOperands(condition);
+
+    // 创建循环体区域
+    Region *bodyRegion = result.addRegion();
+    Block *bodyBlock = new Block();
+    bodyRegion->push_back(bodyBlock);
+
+    // 生成循环体内容
+    if (bodyBuilder) {
+        OpBuilder::InsertionGuard guard(builder);
+        builder.setInsertionPointToStart(bodyBlock);
+        bodyBuilder(builder, result.location);
+    }
+}
+
+//===----------------------------------------------------------------------===//
+// CallOp
+//===----------------------------------------------------------------------===//
+
+void CallOp::build(OpBuilder &builder, OperationState &result, StringRef callee, ArrayRef<Value> arguments,
+                   Type resultType) {
+    result.addAttribute("callee", FlatSymbolRefAttr::get(builder.getContext(), callee));
+    result.addOperands(arguments);
+    if (resultType)
+        result.addTypes(resultType);
+}
+
+void CallOp::build(OpBuilder &builder, OperationState &result, StringRef callee, ArrayRef<Value> arguments) {
+    build(builder, result, callee, arguments, Type());
+}
+
+// 直接在C++文件中实现inferReturnTypes，不需要在TableGen中声明
+LogicalResult CallOp::inferReturnTypes(MLIRContext *context, std::optional<Location> location, ValueRange operands,
+                                       DictionaryAttr attributes, RegionRange regions,
+                                       SmallVectorImpl<Type> &inferredReturnTypes) {
+    // 在实际应用中，这里应该查找函数声明并使用其返回类型
+    // 因为我们的示例中结果类型是在构建器中设置的，所以这里什么都不做
+    return success();
+}
+
+//===----------------------------------------------------------------------===//
+// ReturnOp
+//===----------------------------------------------------------------------===//
 
 #define GET_OP_CLASSES
 #include "mlir/CminusfOps.cpp.inc"

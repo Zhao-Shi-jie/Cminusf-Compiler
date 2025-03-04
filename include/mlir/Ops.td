@@ -6,6 +6,7 @@ include "mlir/IR/FunctionInterfaces.td"
 include "mlir/IR/SymbolInterfaces.td"
 include "mlir/Interfaces/SideEffectInterfaces.td"
 include "mlir/Interfaces/InferTypeOpInterface.td"
+include "mlir/Interfaces/ControlFlowInterfaces.td"
 include "mlir/IR/EnumAttr.td"
 
 def Cminusf_Dialect : Dialect {
@@ -16,7 +17,9 @@ def Cminusf_Dialect : Dialect {
 class Cminusf_Op<string mnemonic, list<Trait> traits = []> :
     Op<Cminusf_Dialect, mnemonic, traits>;
 
-// 统一的常量操作，支持整数和浮点类型
+//===----------------------------------------------------------------------===//
+// ConstantOp
+//===----------------------------------------------------------------------===//
 def Cminusf_ConstantOp : Cminusf_Op<"constant", [Pure]> {
   let summary = "Constant value operation";
   let description = [{
@@ -36,22 +39,36 @@ def Cminusf_ConstantOp : Cminusf_Op<"constant", [Pure]> {
     AnyTypeOf<[F32, I32]>:$result
   );
 
-  let assemblyFormat = "`(` $value `)` attr-dict `:` type($result)";
+  //let assemblyFormat = "`(` $value `)` attr-dict `:` type($result)";
+  let hasCustomAssemblyFormat = 1;
 
   // 自动类型推导：结果类型取自属性类型
+  // let builders = [
+  //   OpBuilder<(ins "int":$value), [{
+  //       build($_builder, $_state, $_builder.getIntegerAttr($_builder.getI32Type(), value));
+  //   }]>,
+  //   OpBuilder<(ins "float":$value), [{
+  //       build($_builder, $_state, $_builder.getF32FloatAttr(value));
+  //   }]>
+  // ];
   let builders = [
     OpBuilder<(ins "int":$value), [{
-        build($_builder, $_state, $_builder.getIntegerAttr($_builder.getI32Type(), value));
+      $_state.addAttribute(getValueAttrName($_state.name), $_builder.getIntegerAttr($_builder.getI32Type(), value));
+      $_state.addTypes($_builder.getI32Type());
     }]>,
+    
     OpBuilder<(ins "float":$value), [{
-        build($_builder, $_state, $_builder.getF32FloatAttr(value));
+      $_state.addAttribute(getValueAttrName($_state.name), $_builder.getF32FloatAttr(value));
+      $_state.addTypes($_builder.getF32Type());
     }]>
   ];
 
   let hasVerifier = 1;
 }
 
-/// 变量声明
+//===----------------------------------------------------------------------===//
+// VarDeclOp
+//===----------------------------------------------------------------------===//
 def Cminusf_VarDeclOp : Cminusf_Op<"var_decl", [Pure]> {
   let summary = "Variable declaration";
   let description = [{
@@ -107,7 +124,9 @@ def Cminusf_VarDeclOp : Cminusf_Op<"var_decl", [Pure]> {
   let hasVerifier = 1;
 }
 
-/// 函数声明
+//===----------------------------------------------------------------------===//
+// FunDeclOp
+//===----------------------------------------------------------------------===//
 def Cminusf_FunDeclOp : Cminusf_Op<"fun_decl", [FunctionOpInterface, IsolatedFromAbove]> {
   let summary = "Function declaration";
   let description = [{
@@ -152,7 +171,9 @@ def Cminusf_FunDeclOp : Cminusf_Op<"fun_decl", [FunctionOpInterface, IsolatedFro
   // }];
 }
 
-/// 赋值表达式 `var = expr`
+//===----------------------------------------------------------------------===//
+// AssignOp
+//===----------------------------------------------------------------------===//
 def Cminusf_AssignOp : Cminusf_Op<"assign", [DeclareOpInterfaceMethods<InferTypeOpInterface>]> {
   let summary = "Variable assignment operation";
   let description = [{
@@ -175,34 +196,36 @@ def Cminusf_AssignOp : Cminusf_Op<"assign", [DeclareOpInterfaceMethods<InferType
   );
 
   // 自动类型推导构建器
-  let builders = [
-    OpBuilder<(ins "Value":$var, "Value":$expr), [{
-      auto varType = var.getType();
-      auto exprType = expr.getType();
+  // let builders = [
+  //   OpBuilder<(ins "Value":$var, "Value":$expr), [{
+  //     auto varType = var.getType();
+  //     auto exprType = expr.getType();
 
-      // 确保变量类型和表达式类型匹配
-      assert(varType == exprType && "变量类型与表达式类型不匹配");
+  //     // 确保变量类型和表达式类型匹配
+  //     assert(varType == exprType && "变量类型与表达式类型不匹配");
 
-      // 结果类型与变量类型一致
-      $_state.addTypes(varType);
-      $_state.addOperands({var, expr});
-    }]>
-  ];
+  //     // 结果类型与变量类型一致
+  //     $_state.addTypes(varType);
+  //     $_state.addOperands({var, expr});
+  //   }]>
+  // ];
 
   let hasCustomAssemblyFormat = 1;
   let hasVerifier = 1;
   
-  let extraClassDeclaration = [{
-    LogicalResult inferReturnTypes(MLIRContext *context,
-                                  std::optional<Location> location,
-                                  ValueRange operands,
-                                  DictionaryAttr attributes,
-                                  RegionRange regions,
-                                  SmallVectorImpl<Type> &inferredReturnTypes);
-  }];
+  // let extraClassDeclaration = [{
+  //   LogicalResult inferReturnTypes(MLIRContext *context,
+  //                                 std::optional<Location> location,
+  //                                 ValueRange operands,
+  //                                 DictionaryAttr attributes,
+  //                                 RegionRange regions,
+  //                                 SmallVectorImpl<Type> &inferredReturnTypes);
+  // }];
 }
 
-// 首先，在文件开头定义比较谓词枚举
+//===----------------------------------------------------------------------===//
+// CmpOp
+//===----------------------------------------------------------------------===//
 def Cminusf_CmpPredicateEQ : I32EnumAttrCase<"eq", 0>;
 def Cminusf_CmpPredicateNE : I32EnumAttrCase<"ne", 1>;
 def Cminusf_CmpPredicateLT : I32EnumAttrCase<"lt", 2>;
@@ -213,7 +236,7 @@ def Cminusf_CmpPredicateGE : I32EnumAttrCase<"ge", 5>;
 def Cminusf_CmpPredicate : I32EnumAttr<"CmpPredicate", "comparison predicate",
   [Cminusf_CmpPredicateEQ, Cminusf_CmpPredicateNE, Cminusf_CmpPredicateLT, 
    Cminusf_CmpPredicateLE, Cminusf_CmpPredicateGT, Cminusf_CmpPredicateGE]> {
-  let cppNamespace = "::cminusf::mlir";
+  let cppNamespace = "::mlir::cminusf";
 }
 
 /// 比较运算
@@ -246,18 +269,15 @@ def Cminusf_CmpOp : Cminusf_Op<"cmp", [Pure, DeclareOpInterfaceMethods<InferType
   
   let results = (outs I32:$result);
   
-  // 添加自定义验证
   let hasVerifier = 1;
   
-  // 添加自定义汇编格式
   let hasCustomAssemblyFormat = 1;
   
-  // 为构建器添加方便的方法
   let builders = [
-    OpBuilder<(ins "Value":$lhs, "Value":$rhs, "CmpPredicate":$predicate), [{
-      build($_builder, $_state, $_builder.getI32Type(), lhs, rhs, 
-            CmpPredicateAttr::get($_builder.getContext(), predicate));
-    }]>,
+    // OpBuilder<(ins "Value":$lhs, "Value":$rhs, "CmpPredicate":$predicate), [{
+    //   build($_builder, $_state, $_builder.getI32Type(), lhs, rhs, 
+    //         CmpPredicateAttr::get($_builder.getContext(), predicate));
+    // }]>,
     OpBuilder<(ins "Value":$lhs, "Value":$rhs, "StringRef":$predicate), [{
       build($_builder, $_state, $_builder.getI32Type(), lhs, rhs, 
             CmpPredicateAttr::get($_builder.getContext(), 
@@ -265,7 +285,6 @@ def Cminusf_CmpOp : Cminusf_Op<"cmp", [Pure, DeclareOpInterfaceMethods<InferType
     }]>
   ];
   
-  // 添加额外方法
   let extraClassDeclaration = [{
     /// 从字符串获取谓词
     static CmpPredicate stringToCmpPredicate(StringRef str);
@@ -278,20 +297,26 @@ def Cminusf_CmpOp : Cminusf_Op<"cmp", [Pure, DeclareOpInterfaceMethods<InferType
   }];
 }
 
-/// 算术运算 (+, -, *, /)
+//===----------------------------------------------------------------------===//
+// BinaryOp
+//===----------------------------------------------------------------------===//
 // 定义二元操作类型枚举
 def Cminusf_BinaryOpTypeAdd : I32EnumAttrCase<"add", 0>;
 def Cminusf_BinaryOpTypeSub : I32EnumAttrCase<"sub", 1>;
 def Cminusf_BinaryOpTypeMul : I32EnumAttrCase<"mul", 2>;
 def Cminusf_BinaryOpTypeDiv : I32EnumAttrCase<"div", 3>;
 
-def Cminusf_BinaryOpType : I32EnumAttr<"BinaryOpType", "Binary operation type",
+def BinaryOpType : I32EnumAttr<"BinaryOpType", "Binary operation type",
   [Cminusf_BinaryOpTypeAdd, Cminusf_BinaryOpTypeSub, Cminusf_BinaryOpTypeMul, Cminusf_BinaryOpTypeDiv]> {
-  let cppNamespace = "::cminusf::mlir";
+    let cppNamespace = "mlir::cminusf";
 }
+// def BinaryOpType : I32EnumAttr<"BinaryOpType", "Binary operation type",
+//   [Cminusf_BinaryOpTypeAdd, Cminusf_BinaryOpTypeSub, Cminusf_BinaryOpTypeMul, Cminusf_BinaryOpTypeDiv]>,
+//   Cminusf_Op<"binary_type", [Pure]> {
+//   let cppNamespace = "mlir::cminusf";
+// }
 
-def Cminusf_BinaryOp : Cminusf_Op<"binary", [
-    Pure,
+def Cminusf_BinaryOp : Cminusf_Op<"binary", [Pure,
     DeclareOpInterfaceMethods<InferTypeOpInterface>
   ]> {
   
@@ -325,7 +350,7 @@ def Cminusf_BinaryOp : Cminusf_Op<"binary", [
   }];
   
   let arguments = (ins 
-      Cminusf_BinaryOpType:$op_type,
+      BinaryOpType:$op_type,
       AnyTypeOf<[F32, I32]>:$lhs,
       AnyTypeOf<[F32, I32]>:$rhs
   );
@@ -341,27 +366,27 @@ def Cminusf_BinaryOp : Cminusf_Op<"binary", [
   // 为构建器添加方便的方法
   let builders = [
     // 基本构建器
-    OpBuilder<(ins "BinaryOpType":$op_type, "Value":$lhs, "Value":$rhs), [{
-      Type lhsType = lhs.getType();
-      Type rhsType = rhs.getType();
-      Type resultType;
+    // OpBuilder<(ins "BinaryOpType":$op_type, "Value":$lhs, "Value":$rhs), [{
+    //   Type lhsType = lhs.getType();
+    //   Type rhsType = rhs.getType();
+    //   Type resultType;
       
-      // 判断操作类型和应用相应的类型规则
-      if (op_type == BinaryOpType::add || op_type == BinaryOpType::sub) {
-        // 加减法: 操作数必须相同类型，结果与操作数相同
-        assert(lhsType == rhsType && "加减操作的操作数类型必须相同");
-        resultType = lhsType;
-      } else {
-        // 乘除法: 同类型时结果相同，不同类型时结果为f32
-        if (lhsType == rhsType) {
-          resultType = lhsType;
-        } else {
-          resultType = $_builder.getF32Type();
-        }
-      }
+    //   // 判断操作类型和应用相应的类型规则
+    //   if (op_type == BinaryOpType::add || op_type == BinaryOpType::sub) {
+    //     // 加减法: 操作数必须相同类型，结果与操作数相同
+    //     assert(lhsType == rhsType && "加减操作的操作数类型必须相同");
+    //     resultType = lhsType;
+    //   } else {
+    //     // 乘除法: 同类型时结果相同，不同类型时结果为f32
+    //     if (lhsType == rhsType) {
+    //       resultType = lhsType;
+    //     } else {
+    //       resultType = $_builder.getF32Type();
+    //     }
+    //   }
       
-      build($_builder, $_state, resultType, op_type, lhs, rhs);
-    }]>,
+    //   build($_builder, $_state, resultType, op_type, lhs, rhs);
+    // }]>,
     
     // 字符串构建器 - 从操作符字符串创建
     OpBuilder<(ins "StringRef":$op_type_str, "Value":$lhs, "Value":$rhs), [{
@@ -400,37 +425,129 @@ def Cminusf_BinaryOp : Cminusf_Op<"binary", [
   }];
 }
 
-/// 选择语句 `if (cond) then else`
-def Cminusf_IfOp : Cminusf_Op<"if", [Pure]> {
+//===----------------------------------------------------------------------===//
+// IfOp
+//===----------------------------------------------------------------------===//
+def Cminusf_IfOp : Cminusf_Op<"if", [
+    RecursiveMemoryEffects,
+    SingleBlockImplicitTerminator<"YieldOp">,
+    NoRegionArguments
+  ]> {
+  
   let summary = "Conditional branch operation";
   let description = [{
-    A conditional if-else statement.
+    Example:
+    ```mlir
+    %cond = cminusf.constant 1 : i32
+    cminusf.if %cond {
+      // then branch code
+      cminusf.yield
+    } else {
+      // else branch code
+      cminusf.yield
+    }
+    ```
   }];
   
   let arguments = (ins I32:$condition);
-  let regions = (region AnyRegion:$then_branch, AnyRegion:$else_branch);
+  let results = (outs);
+  let regions = (region SizedRegion<1>:$then_branch, SizedRegion<1>:$else_branch);
+  
+  let assemblyFormat = [{
+    $condition `{` $then_branch `}` `else` `{` $else_branch `}` attr-dict
+  }];
+  
+  // 只保留简单构建器
+  let builders = [
+    OpBuilder<(ins "Value":$condition, 
+                  "function_ref<void(OpBuilder &, Location)>":$thenBuilder,
+                  "function_ref<void(OpBuilder &, Location)>":$elseBuilder)>
+  ];
+  
+  // let extraClassDeclaration = [{
+  //   // 仅保留基本区域访问方法，移除其他方法
+  //   Region &getThenBranch() { return getRegion(0); }
+  //   Region &getElseBranch() { return getRegion(1); }
+  // }];
+}
+
+// 简化的 YieldOp
+def Cminusf_YieldOp : Cminusf_Op<"yield", [Pure, ReturnLike, Terminator]> {
+  let summary = "Region terminator operation";
+  let description = [{
+    The "yield" operation terminates a region without returning values.
+  }];
+  
+  let arguments = (ins);
+  let results = (outs);
+  
+  // 修复 build 方法
+  let builders = [
+    OpBuilder<(ins)>
+  ];
+  
+  let assemblyFormat = "attr-dict";
 }
 
 /// 循环语句 `while (cond) { body }`
-def Cminusf_WhileOp : Cminusf_Op<"while", [Pure]> {
+def Cminusf_WhileOp : Cminusf_Op<"while", [
+    RecursiveMemoryEffects,
+    SingleBlockImplicitTerminator<"YieldOp">,
+    NoRegionArguments
+  ]> {
   let summary = "While loop operation";
   let description = [{
-    A loop that executes while the condition holds true.
+    Example:
+    ```mlir
+    cminusf.while %condition {
+      // body operations
+      cminusf.yield
+    }
+    ```
   }];
   
   let arguments = (ins I32:$condition);
-  let regions = (region AnyRegion:$body);
+  let results = (outs);
+  let regions = (region SizedRegion<1>:$body);
+  
+  let assemblyFormat = [{
+    $condition `{` $body `}` attr-dict
+  }];
+  
+  // 添加简单的构建器
+  let builders = [
+    OpBuilder<(ins "Value":$condition, 
+                  "function_ref<void(OpBuilder &, Location)>":$bodyBuilder)>
+  ];
+  
+  // 简单的验证器
 }
 
 /// 函数调用 `call foo(args)`
-def Cminusf_CallOp : Cminusf_Op<"call", [Pure]> {
+def Cminusf_CallOp : Cminusf_Op<"call", [Pure, DeclareOpInterfaceMethods<InferTypeOpInterface>]> {
   let summary = "Function call operation";
   let description = [{
-    Calls a function with given arguments.
+    Example:
+    ```mlir
+    %result = cminusf.call @add_func(%arg0, %arg1) : (i32, i32) -> i32
+    ```
   }];
   
-  let arguments = (ins SymbolRefAttr:$callee, Variadic<AnyTypeOf<[F32,I32]>>:$args);
-  let results = (outs AnyTypeOf<[F32, I32]>:$result);
+  let arguments = (ins 
+    FlatSymbolRefAttr:$callee,
+    Variadic<AnyTypeOf<[F32, I32]>>:$args
+  );
+  
+  let results = (outs Optional<AnyTypeOf<[F32, I32]>>:$result);
+  
+  let assemblyFormat = [{
+    $callee `(` $args `)` attr-dict `:` functional-type($args, results)
+  }];
+  
+  let builders = [
+    OpBuilder<(ins "StringRef":$callee, "ArrayRef<Value>":$arguments, "Type":$resultType)>,
+    OpBuilder<(ins "StringRef":$callee, "ArrayRef<Value>":$arguments)>
+  ];
 }
 
 /// 返回语句 `return expr`
