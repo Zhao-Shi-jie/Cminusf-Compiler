@@ -1,15 +1,21 @@
 #include "Dialect.h"
 #include "ast.hpp"
+#include "mlir/Dialect/Func/IR/FuncOps.h"
 #include "mlir/IR/Attributes.h"
 #include "mlir/IR/Builders.h"
 #include "mlir/IR/BuiltinAttributeInterfaces.h"
 #include "mlir/IR/BuiltinAttributes.h"
+#include "mlir/IR/BuiltinOps.h"
 #include "mlir/IR/BuiltinTypes.h"
 #include "mlir/IR/Diagnostics.h"
 #include "mlir/IR/FunctionImplementation.h"
 #include "mlir/IR/OpImplementation.h"
 #include "mlir/IR/Operation.h"
+#include "mlir/IR/OperationSupport.h"
 #include "mlir/IR/Types.h"
+#include "mlir/Support/LogicalResult.h"
+#include "syntax_analyzer.h"
+#include "llvm/Support/Debug.h"
 #include <cstdint>
 #include <string>
 
@@ -31,7 +37,7 @@ void CminusfDialect::initialize() {
 }
 
 ///===----------------------------------------------------------------------===//
-// Cminusf Operations
+// Cminusf Utils
 //===----------------------------------------------------------------------===//
 
 //===----------------------------------------------------------------------===//
@@ -111,7 +117,8 @@ mlir::LogicalResult ConstantOp::verify() {
 // VarDeclarationOp
 //===----------------------------------------------------------------------===//
 
-// void VarDeclOp::build(mlir::OpBuilder &builder, mlir::OperationState &state, StringAttr var_name, Type var_type) {
+// void VarDeclOp::build(mlir::OpBuilder &builder, mlir::OperationState &state, StringAttr var_name, Type
+// var_type) {
 //     state.addAttribute("var_name", var_name);
 //     state.addAttribute("var_type_attr", TypeAttr::get(var_type));
 //     // 结果类型与参数类型一致
@@ -211,9 +218,106 @@ ParseResult FunDeclOp::parse(mlir::OpAsmParser &parser, mlir::OperationState &re
 
 void FunDeclOp::print(mlir::OpAsmPrinter &p) {
     // 调用 FunctionOpInterface 提供的工具方法来打印函数操作
-    mlir::function_interface_impl::printFunctionOp(p, *this, /*isVariadic=*/false, getFunctionTypeAttrName().getValue(),
+    mlir::function_interface_impl::printFunctionOp(p, *this, /*isVariadic=*/false,
+                                                   getFunctionTypeAttrName().getValue(),
                                                    getArgAttrsAttrName(), getResAttrsAttrName());
 }
+
+mlir::Region *FunDeclOp::getCallableRegion() { return &getBody(); }
+
+llvm::ArrayRef<mlir::Type> FunDeclOp::getCallableResults() { return getFunctionType().getResults(); }
+
+//===----------------------------------------------------------------------===//
+// CallOp
+//===----------------------------------------------------------------------===//
+
+void CallOp::build(OpBuilder &builder, OperationState &result, StringRef callee, ArrayRef<Value> arguments) {
+    result.addAttribute("callee", FlatSymbolRefAttr::get(builder.getContext(), callee));
+    result.addOperands(arguments);
+
+    Operation *parentOp = builder.getInsertionBlock()->getParentOp();
+    ModuleOp module = parentOp->getParentOfType<ModuleOp>();
+
+    if (module) {
+        if (auto callableOp = module.lookupSymbol<mlir::CallableOpInterface>(callee)) {
+            auto resultType = callableOp.getCallableResults();
+            if (!resultType.empty()) {
+                result.addTypes(resultType);
+            }
+        } else if (auto funcOp = module.lookupSymbol<FunDeclOp>(callee)) {
+            auto resultType = funcOp->getResultTypes();
+            if (!resultType.empty()) {
+                result.addTypes(resultType);
+            }
+        } else {
+            // todo : 修正无法找到被调用函数时的处理
+            result.addTypes(builder.getIntegerType(32));
+        }
+    }
+}
+
+LogicalResult CallOp::verify() {
+    Operation *op = getOperation();
+    StringRef callee = getCallee();
+
+    ModuleOp module = op->getParentOfType<ModuleOp>();
+    if (!module) {
+        return emitError() << "cannot find parent module";
+    }
+
+    // 1. 验证被调用函数是否存在
+    auto funcOp = module.lookupSymbol<FunDeclOp>(callee);
+    if (!funcOp) {
+        return emitError() << "cannot find function '" << callee << "'";
+    }
+
+    // 2. 验证参数数量是否一致
+    unsigned numArguments = getNumOperands();
+    unsigned numParameters = funcOp.getNumArguments();
+
+    if (numArguments != numParameters) {
+        return emitError() << "incorrect number of operands for callee '" << callee << "': expected "
+                           << numParameters << ", but got " << numArguments;
+    }
+
+    // 3. 验证参数类型是否一致
+    auto argumentTypes = getOperandTypes();
+    auto parameterTypes = funcOp.getArgumentTypes();
+
+    for (unsigned i = 0; i < numArguments; ++i) {
+        if (argumentTypes[i] != parameterTypes[i]) {
+            return emitError() << "operand type mismatch for operand " << i << " of callee '" << callee
+                               << "': "
+                               << "expected " << parameterTypes[i] << ", but got " << argumentTypes[i];
+        }
+    }
+
+    // 4. 验证返回类型是否一致（如果函数有返回值）
+    // 注意：您可能需要根据您的CallOp定义来调整这部分
+    auto resultTypes = getResultTypes();
+    auto funcResultTypes = funcOp.getResultTypes();
+
+    if (resultTypes.size() != funcResultTypes.size()) {
+        return emitError() << "incorrect number of results for callee '" << callee << "': expected "
+                           << funcResultTypes.size() << ", but got " << resultTypes.size();
+    }
+
+    for (unsigned i = 0; i < resultTypes.size(); ++i) {
+        if (resultTypes[i] != funcResultTypes[i]) {
+            return emitError() << "result type mismatch for result " << i << " of callee '" << callee << "': "
+                               << "expected " << funcResultTypes[i] << ", but got " << resultTypes[i];
+        }
+    }
+
+    return success();
+}
+
+// CallOpInterface implementation
+CallInterfaceCallable CallOp::getCallableForCallee() {
+    return (*this)->getAttrOfType<SymbolRefAttr>("callee");
+}
+
+Operation::operand_range CallOp::getArgOperands() { return getArgs(); }
 
 //===----------------------------------------------------------------------===//
 // AssignOp
@@ -233,7 +337,8 @@ ParseResult AssignOp::parse(OpAsmParser &parser, OperationState &result) {
         parser.parseOptionalAttrDict(result.attributes) || parser.parseColonType(type))
         return failure();
 
-    if (parser.resolveOperand(var, type, result.operands) || parser.resolveOperand(expr, type, result.operands))
+    if (parser.resolveOperand(var, type, result.operands) ||
+        parser.resolveOperand(expr, type, result.operands))
         return failure();
 
     result.addTypes(type);
@@ -243,17 +348,19 @@ ParseResult AssignOp::parse(OpAsmParser &parser, OperationState &result) {
 LogicalResult AssignOp::verify() {
     // 检查变量和表达式类型是否匹配
     if (getVar().getType() != getExpr().getType())
-        return emitOpError("变量类型 ") << getVar().getType() << " 与表达式类型 " << getExpr().getType() << " 不匹配";
+        return emitOpError("变量类型 ")
+               << getVar().getType() << " 与表达式类型 " << getExpr().getType() << " 不匹配";
 
     // 检查结果类型是否与变量类型匹配
     if (getResult().getType() != getVar().getType())
-        return emitOpError("结果类型 ") << getResult().getType() << " 与变量类型 " << getVar().getType() << " 不匹配";
+        return emitOpError("结果类型 ")
+               << getResult().getType() << " 与变量类型 " << getVar().getType() << " 不匹配";
 
     return success();
 }
 
-LogicalResult AssignOp::inferReturnTypes(MLIRContext *context, std::optional<Location> location, ValueRange operands,
-                                         DictionaryAttr attributes, RegionRange regions,
+LogicalResult AssignOp::inferReturnTypes(MLIRContext *context, std::optional<Location> location,
+                                         ValueRange operands, DictionaryAttr attributes, RegionRange regions,
                                          SmallVectorImpl<Type> &inferredReturnTypes) {
     // 确保有两个操作数
     if (operands.size() != 2)
@@ -378,7 +485,8 @@ ParseResult CmpOp::parse(OpAsmParser &parser, OperationState &result) {
 LogicalResult CmpOp::verify() {
     // 验证操作数类型相同
     if (!isSameOperandsType())
-        return emitOpError() << "操作数必须具有相同类型，但得到 " << getLhs().getType() << " 和 " << getRhs().getType();
+        return emitOpError() << "操作数必须具有相同类型，但得到 " << getLhs().getType() << " 和 "
+                             << getRhs().getType();
 
     // 验证操作数类型为 f32 或 i32
     Type operandType = getLhs().getType();
@@ -388,7 +496,8 @@ LogicalResult CmpOp::verify() {
     return success();
 }
 
-// LogicalResult CmpOp::inferReturnTypes(MLIRContext *context, Optional<Location> location, ValueRange operands,
+// LogicalResult CmpOp::inferReturnTypes(MLIRContext *context, Optional<Location> location, ValueRange
+// operands,
 //                                       DictionaryAttr attributes, RegionRange regions,
 //                                       SmallVectorImpl<Type> &inferredReturnTypes) {
 
@@ -590,7 +699,8 @@ LogicalResult BinaryOp::verify() {
     // 加减法专用验证
     if (isAddOrSubOp()) {
         if (lhsType != rhsType)
-            return emitOpError() << binaryOp << " 操作要求操作数类型相同，但得到 " << lhsType << " 和 " << rhsType;
+            return emitOpError() << binaryOp << " 操作要求操作数类型相同，但得到 " << lhsType << " 和 "
+                                 << rhsType;
 
         if (resultType != lhsType)
             return emitOpError() << binaryOp << " 操作的结果类型必须与操作数类型相同，但得到 " << resultType
@@ -602,8 +712,8 @@ LogicalResult BinaryOp::verify() {
         if (lhsType == rhsType) {
             // 相同类型操作数，结果必须相同
             if (resultType != lhsType)
-                return emitOpError() << binaryOp << " 操作中，相同类型操作数的结果类型必须相同，但得到 " << resultType
-                                     << " 而不是 " << lhsType;
+                return emitOpError() << binaryOp << " 操作中，相同类型操作数的结果类型必须相同，但得到 "
+                                     << resultType << " 而不是 " << lhsType;
         } else {
             // 不同类型操作数，结果必须是 f32
             if (!resultType.isF32())
@@ -631,8 +741,8 @@ LogicalResult BinaryOp::verify() {
 }
 
 /// 类型推断方法
-LogicalResult BinaryOp::inferReturnTypes(MLIRContext *context, Optional<Location> location, ValueRange operands,
-                                         DictionaryAttr attributes, RegionRange regions,
+LogicalResult BinaryOp::inferReturnTypes(MLIRContext *context, Optional<Location> location,
+                                         ValueRange operands, DictionaryAttr attributes, RegionRange regions,
                                          SmallVectorImpl<Type> &inferredReturnTypes) {
 
     // 确保有两个操作数
@@ -744,33 +854,35 @@ void WhileOp::build(OpBuilder &builder, OperationState &result, Value condition,
 }
 
 //===----------------------------------------------------------------------===//
-// CallOp
-//===----------------------------------------------------------------------===//
-
-void CallOp::build(OpBuilder &builder, OperationState &result, StringRef callee, ArrayRef<Value> arguments,
-                   Type resultType) {
-    result.addAttribute("callee", FlatSymbolRefAttr::get(builder.getContext(), callee));
-    result.addOperands(arguments);
-    if (resultType)
-        result.addTypes(resultType);
-}
-
-void CallOp::build(OpBuilder &builder, OperationState &result, StringRef callee, ArrayRef<Value> arguments) {
-    build(builder, result, callee, arguments, Type());
-}
-
-// 直接在C++文件中实现inferReturnTypes，不需要在TableGen中声明
-LogicalResult CallOp::inferReturnTypes(MLIRContext *context, std::optional<Location> location, ValueRange operands,
-                                       DictionaryAttr attributes, RegionRange regions,
-                                       SmallVectorImpl<Type> &inferredReturnTypes) {
-    // 在实际应用中，这里应该查找函数声明并使用其返回类型
-    // 因为我们的示例中结果类型是在构建器中设置的，所以这里什么都不做
-    return success();
-}
-
-//===----------------------------------------------------------------------===//
 // ReturnOp
 //===----------------------------------------------------------------------===//
+
+mlir::LogicalResult ReturnOp::verify() {
+    auto function = cast<FunDeclOp>((*this)->getParentOp());
+
+    if (getNumOperands() > 1)
+        return emitOpError() << "expects at most 1 return operand";
+
+    // The operand number and types must match the function signature.
+    const auto &results = function.getFunctionType().getResults();
+    if (getNumOperands() != results.size())
+        return emitOpError() << "does not return the same number of values (" << getNumOperands()
+                             << ") as the enclosing function (" << results.size() << ")";
+
+    // If the operation does not have an input, we are done.
+    if (!hasOperand())
+        return mlir::success();
+
+    auto inputType = *operand_type_begin();
+    auto resultType = results.front();
+
+    // Check that the result type of the function matches the operand type.
+    if (inputType == resultType)
+        return mlir::success();
+
+    return emitError() << "type of return operand (" << inputType << ") doesn't match function result type ("
+                       << resultType << ")";
+}
 
 #define GET_OP_CLASSES
 #include "mlir/CminusfOps.cpp.inc"

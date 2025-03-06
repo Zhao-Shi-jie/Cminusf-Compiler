@@ -7,6 +7,7 @@ include "mlir/IR/SymbolInterfaces.td"
 include "mlir/Interfaces/SideEffectInterfaces.td"
 include "mlir/Interfaces/InferTypeOpInterface.td"
 include "mlir/Interfaces/ControlFlowInterfaces.td"
+include "mlir/Interfaces/CallInterfaces.td"
 include "mlir/IR/EnumAttr.td"
 
 def Cminusf_Dialect : Dialect {
@@ -127,7 +128,9 @@ def Cminusf_VarDeclOp : Cminusf_Op<"var_decl", [Pure]> {
 //===----------------------------------------------------------------------===//
 // FunDeclOp
 //===----------------------------------------------------------------------===//
-def Cminusf_FunDeclOp : Cminusf_Op<"fun_decl", [FunctionOpInterface, IsolatedFromAbove]> {
+def Cminusf_FunDeclOp : Cminusf_Op<"fun_decl", [
+  DeclareOpInterfaceMethods<CallableOpInterface>,
+  FunctionOpInterface, IsolatedFromAbove]> {
   let summary = "Function declaration";
   let description = [{
     Declares a function with a name, return type, and parameters.
@@ -463,12 +466,6 @@ def Cminusf_IfOp : Cminusf_Op<"if", [
                   "function_ref<void(OpBuilder &, Location)>":$thenBuilder,
                   "function_ref<void(OpBuilder &, Location)>":$elseBuilder)>
   ];
-  
-  // let extraClassDeclaration = [{
-  //   // 仅保留基本区域访问方法，移除其他方法
-  //   Region &getThenBranch() { return getRegion(0); }
-  //   Region &getElseBranch() { return getRegion(1); }
-  // }];
 }
 
 // 简化的 YieldOp
@@ -489,7 +486,9 @@ def Cminusf_YieldOp : Cminusf_Op<"yield", [Pure, ReturnLike, Terminator]> {
   let assemblyFormat = "attr-dict";
 }
 
-/// 循环语句 `while (cond) { body }`
+//===----------------------------------------------------------------------===//
+// WhileOp
+//===----------------------------------------------------------------------===//
 def Cminusf_WhileOp : Cminusf_Op<"while", [
     RecursiveMemoryEffects,
     SingleBlockImplicitTerminator<"YieldOp">,
@@ -523,8 +522,35 @@ def Cminusf_WhileOp : Cminusf_Op<"while", [
   // 简单的验证器
 }
 
-/// 函数调用 `call foo(args)`
-def Cminusf_CallOp : Cminusf_Op<"call", [Pure, DeclareOpInterfaceMethods<InferTypeOpInterface>]> {
+//===----------------------------------------------------------------------===//
+// CallOp
+//===----------------------------------------------------------------------===//
+// def Cminusf_CallOp : Cminusf_Op<"call", [Pure, DeclareOpInterfaceMethods<InferTypeOpInterface>]> {
+//   let summary = "Function call operation";
+//   let description = [{
+//     Example:
+//     ```mlir
+//     %result = cminusf.call @add_func(%arg0, %arg1) : (i32, i32) -> i32
+//     ```
+//   }];
+  
+//   let arguments = (ins 
+//     FlatSymbolRefAttr:$callee,
+//     Variadic<AnyTypeOf<[F32, I32]>>:$args
+//   );
+  
+//   let results = (outs Optional<AnyTypeOf<[F32, I32]>>:$result);
+  
+//   let assemblyFormat = [{
+//     $callee `(` $args `)` attr-dict `:` functional-type($args, results)
+//   }];
+  
+//   let builders = [
+//     OpBuilder<(ins "StringRef":$callee, "ArrayRef<Value>":$arguments, "Type":$resultType)>,
+//     OpBuilder<(ins "StringRef":$callee, "ArrayRef<Value>":$arguments)>
+//   ];
+// }
+def Cminusf_CallOp : Cminusf_Op<"call", [DeclareOpInterfaceMethods<CallOpInterface>]> {
   let summary = "Function call operation";
   let description = [{
     Example:
@@ -545,19 +571,35 @@ def Cminusf_CallOp : Cminusf_Op<"call", [Pure, DeclareOpInterfaceMethods<InferTy
   }];
   
   let builders = [
-    OpBuilder<(ins "StringRef":$callee, "ArrayRef<Value>":$arguments, "Type":$resultType)>,
     OpBuilder<(ins "StringRef":$callee, "ArrayRef<Value>":$arguments)>
   ];
+
+  let hasVerifier = 1;
 }
 
-/// 返回语句 `return expr`
-def Cminusf_ReturnOp : Cminusf_Op<"return", [Pure]> {
+//===----------------------------------------------------------------------===//
+// ReturnOp
+//===----------------------------------------------------------------------===//
+def Cminusf_ReturnOp : Cminusf_Op<"return", [Pure, HasParent<"FunDeclOp">,
+                                              Terminator]> {
   let summary = "Return statement";
   let description = [{
     Returns a value from a function.
   }];
   
   let arguments = (ins Optional<AnyTypeOf<[F32, I32]>>:$value);
+
+  let assemblyFormat = "($value^ `:` type($value))? attr-dict ";
+
+  // let builders = [
+  //   OpBuilder<(ins), [{ build($_builder, $_state, std::nullopt); }]>
+  // ];
+
+  let extraClassDeclaration = [{
+    bool hasOperand() { return getNumOperands() != 0; }
+  }];
+
+  let hasVerifier = 1;
 }
 
 #endif // CMINUSF_OPS
