@@ -239,7 +239,7 @@ def Cminusf_CmpPredicateGE : I32EnumAttrCase<"ge", 5>;
 def Cminusf_CmpPredicate : I32EnumAttr<"CmpPredicate", "comparison predicate",
   [Cminusf_CmpPredicateEQ, Cminusf_CmpPredicateNE, Cminusf_CmpPredicateLT, 
    Cminusf_CmpPredicateLE, Cminusf_CmpPredicateGT, Cminusf_CmpPredicateGE]> {
-  let cppNamespace = "::mlir::cminusf";
+  let cppNamespace = "mlir::cminusf";
 }
 
 /// 比较运算

@@ -34,10 +34,11 @@
 
 #include "llvm/ADT/ScopedHashTable.h"
 #include "llvm/ADT/StringRef.h"
+#include <cstddef>
 #include <memory>
 
 using namespace mlir::cminusf;
-using namespace cminusf;
+// using namespace cminusf;
 
 namespace {
 
@@ -143,7 +144,7 @@ class MLIRGenImpl {
 
         if (funDecl.type == TYPE_VOID) {
             // Void function has no results
-            funcType = builder.getFunctionType(paramTypes, llvm::None);
+            funcType = builder.getFunctionType(paramTypes, std::nullopt);
         } else {
             // Function with a return value
             funcType = builder.getFunctionType(paramTypes, returnType);
@@ -178,12 +179,12 @@ class MLIRGenImpl {
         // Add implicit return if needed
         if (builder.getBlock()->empty() || !llvm::isa<ReturnOp>(builder.getBlock()->back())) {
             if (funDecl.type == TYPE_VOID) {
-                builder.create<ReturnOp>(loc);
+                builder.create<ReturnOp>(loc, nullptr);
             } else {
                 // Non-void function should have explicit returns in all code paths
                 llvm::errs() << "Warning: Non-void function '" << funDecl.id
                              << "' missing return statement\n";
-                builder.create<ReturnOp>(loc);
+                builder.create<ReturnOp>(loc, nullptr);
             }
         }
     }
@@ -284,7 +285,7 @@ class MLIRGenImpl {
                 builder.create<ReturnOp>(loc, retVal);
             } else {
                 // Void return
-                builder.create<ReturnOp>(loc);
+                builder.create<ReturnOp>(loc, nullptr);
             }
         } else if (auto *compoundStmt = dynamic_cast<ASTCompoundStmt *>(&stmt)) {
             // Compound statement
@@ -469,6 +470,7 @@ class MLIRGenImpl {
 
 } // namespace
 
+namespace mlir {
 namespace cminusf {
 
 /// The public API for generating MLIR from the C-minus-f AST
@@ -478,3 +480,4 @@ mlir::OwningOpRef<mlir::ModuleOp> mlirGen(mlir::MLIRContext &context, std::uniqu
 }
 
 } // namespace cminusf
+} // namespace mlir
