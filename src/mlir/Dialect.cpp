@@ -886,3 +886,10 @@ mlir::LogicalResult ReturnOp::verify() {
 
 #define GET_OP_CLASSES
 #include "mlir/CminusfOps.cpp.inc"
+
+// 为了引入辅助类的声明
+#define GET_ENUM_CLASSES
+#include "mlir/CminusfEnums.cpp.inc"
+
+#define GET_ATTRDEF_CLASSES
+#include "mlir/CminusfAttributes.cpp.inc"

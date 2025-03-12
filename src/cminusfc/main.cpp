@@ -1,4 +1,4 @@
-#include "ast.hpp"
+#include "common/ast.hpp"
 #include "mlir/Dialect.h"
 #include "mlir/IR/AsmState.h"
 #include "mlir/IR/BuiltinOps.h"
@@ -21,6 +21,27 @@
 using namespace llvm;
 using namespace mlir;
 using namespace cminusf;
+
+// # 基本使用方法
+// ./cminusfc input_file.cminus
+
+// # 生成 AST
+// ./cminusfc --emit-ast input_file.cminus
+
+// # 生成 MLIR
+// ./cminusfc --emit-mlir input_file.cminus
+
+// # 生成 LLVM IR
+// ./cminusfc --emit-llvm input_file.cminus
+
+// # 生成目标文件
+// ./cminusfc --emit-obj input_file.cminus -o output_file.o
+
+// # 使用 JIT 执行
+// ./cminusfc --run-jit input_file.cminus
+
+// # 指定输出文件
+// ./cminusfc input_file.cminus -o output_file.mlir
 
 // 命令行选项定义
 static cl::opt<std::string> InputFilename(cl::Positional, cl::desc("<input file>"), cl::Required);
@@ -47,25 +68,15 @@ mlir::OwningOpRef<mlir::ModuleOp> mlirGen(mlir::MLIRContext &context, std::uniqu
 int main(int argc, char **argv) {
     cl::ParseCommandLineOptions(argc, argv, "CminusF compiler\n");
 
-    // 读取输入文件
-    std::ifstream inputFile(InputFilename);
-    if (!inputFile.is_open()) {
-        errs() << "Error: could not open input file " << InputFilename << "\n";
-        return 1;
-    }
-
-    std::string input((std::istreambuf_iterator<char>(inputFile)), std::istreambuf_iterator<char>());
-    inputFile.close();
-
     // 解析输入文件为语法树
-    syntax_tree *tree = parse(input.c_str());
+    syntax_tree *tree = parse(InputFilename.c_str());
     if (!tree) {
         errs() << "Error: failed to parse input file " << InputFilename << "\n";
         return 1;
     }
 
     // 创建 AST
-    auto ast = std::make_unique<AST>(tree);
+    auto ast = AST(tree);
 
     // 如果只需要输出 AST，则在这里处理
     if (EmitAst) {
@@ -77,7 +88,7 @@ int main(int argc, char **argv) {
     }
 
     // 获取根节点
-    ASTProgram *root = ast->get_root();
+    ASTProgram *root = ast.get_root();
     auto rootNode = std::unique_ptr<ASTNode>(static_cast<ASTNode *>(root));
 
     // 初始化 MLIR 上下文
