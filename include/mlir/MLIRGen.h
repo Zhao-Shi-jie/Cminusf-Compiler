@@ -15,7 +15,7 @@ namespace cminusf {
 
 /// Emit IR for the given Toy moduleAST, returns a newly created MLIR module
 /// or nullptr on failure.
-mlir::OwningOpRef<mlir::ModuleOp> mlirGen(mlir::MLIRContext &context, std::unique_ptr<ASTNode> node);
+mlir::OwningOpRef<mlir::ModuleOp> mlirGen(mlir::MLIRContext &context, ASTProgram &node);
 } // namespace cminusf
 
 } // namespace mlir

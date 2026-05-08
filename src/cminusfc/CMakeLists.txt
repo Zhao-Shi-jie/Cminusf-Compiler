@@ -3,15 +3,22 @@ add_executable(
     main.cpp
 )
 
-add_dependencies(cminusfc mlir)
-
 target_link_libraries(
     cminusfc
-    mlir              # 使用新的 MLIR 库
+    mlir
+    cminusf_passes
     common
     syntax
+    MLIRLLVMToLLVMIRTranslation
+    MLIRTargetLLVMIRExport
     stdc++fs
+    ${llvm_libs}
 )
+
+target_compile_definitions(cminusfc PRIVATE
+    CMINUSF_SOURCE_DIR="${PROJECT_SOURCE_DIR}"
+)
+
 
 install(
     TARGETS cminusfc

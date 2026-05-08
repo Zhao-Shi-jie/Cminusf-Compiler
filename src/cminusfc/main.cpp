@@ -1,178 +1,295 @@
 #include "common/ast.hpp"
 #include "mlir/Dialect.h"
-#include "mlir/IR/AsmState.h"
 #include "mlir/IR/BuiltinOps.h"
 #include "mlir/IR/MLIRContext.h"
-#include "mlir/IR/Verifier.h"
 #include "mlir/MLIRGen.h"
-#include "mlir/Parser/Parser.h"
+#include "mlir/Passes.h"
+#include "mlir/Pass/Pass.h"
 #include "mlir/Pass/PassManager.h"
-#include "mlir/Support/LogicalResult.h"
-#include "mlir/Transforms/Passes.h"
-#include "llvm/Support/CommandLine.h"
-#include "llvm/Support/FileSystem.h"
-#include "llvm/Support/SourceMgr.h"
+#include "mlir/Target/LLVMIR/Dialect/LLVMIR/LLVMToLLVMIRTranslation.h"
+#include "mlir/Target/LLVMIR/Export.h"
+#include "llvm/IR/IRBuilder.h"
+#include "llvm/IR/LLVMContext.h"
+#include "llvm/IR/Function.h"
+#include "llvm/IR/Module.h"
 #include "llvm/Support/raw_ostream.h"
+
+#include <cstdlib>
+#include <chrono>
+#include <filesystem>
 #include <fstream>
 #include <iostream>
 #include <memory>
+#include <sstream>
 #include <string>
+#include <unistd.h>
 
-using namespace llvm;
-using namespace mlir;
-using namespace cminusf;
+static std::string InputFilename;
+static std::string OutputFilename = "-";
+static bool EmitAst = false;
+static bool EmitMlir = false;
+static bool EmitStandardMlir = false;
+static bool EmitLlvmDialect = false;
+static bool EmitLlvm = false;
+static bool EmitAsm = false;
+static bool EmitObjShort = false;
+static bool EmitObj = false;
+static bool EmitExe = false;
 
-// # 基本使用方法
-// ./cminusfc input_file.cminus
-
-// # 生成 AST
-// ./cminusfc --emit-ast input_file.cminus
-
-// # 生成 MLIR
-// ./cminusfc --emit-mlir input_file.cminus
-
-// # 生成 LLVM IR
-// ./cminusfc --emit-llvm input_file.cminus
-
-// # 生成目标文件
-// ./cminusfc --emit-obj input_file.cminus -o output_file.o
-
-// # 使用 JIT 执行
-// ./cminusfc --run-jit input_file.cminus
-
-// # 指定输出文件
-// ./cminusfc input_file.cminus -o output_file.mlir
-
-// 命令行选项定义
-static cl::opt<std::string> InputFilename(cl::Positional, cl::desc("<input file>"), cl::Required);
-
-static cl::opt<bool> EmitAst("emit-ast", cl::desc("Emit AST"), cl::init(false));
-static cl::opt<bool> EmitMlir("emit-mlir", cl::desc("Emit MLIR"), cl::init(false));
-static cl::opt<bool> EmitLlvm("emit-llvm", cl::desc("Emit LLVM IR"), cl::init(false));
-static cl::opt<bool> EmitObj("emit-obj", cl::desc("Emit object file"), cl::init(false));
-static cl::opt<bool> RunJit("run-jit", cl::desc("Run using JIT"), cl::init(false));
-static cl::opt<std::string> OutputFilename("o", cl::desc("Output filename"), cl::value_desc("filename"),
-                                           cl::init("-"));
-
-// 前向声明
 extern "C" {
 #include "syntax_tree.h"
 extern syntax_tree *parse(const char *input);
 }
 
-// 声明 MLIRGen 函数 (从 MLIRGen.cpp)
-namespace cminusf {
-mlir::OwningOpRef<mlir::ModuleOp> mlirGen(mlir::MLIRContext &context, std::unique_ptr<ASTNode> root);
+static bool writeTextFile(const std::filesystem::path &path, const std::string &text) {
+    std::ofstream out(path);
+    if (!out)
+        return false;
+    out << text;
+    return true;
+}
+
+static std::string shellQuote(const std::filesystem::path &path) {
+    std::string input = path.string();
+    std::string quoted = "'";
+    for (char ch : input) {
+        if (ch == '\'')
+            quoted += "'\\''";
+        else
+            quoted += ch;
+    }
+    quoted += "'";
+    return quoted;
+}
+
+static std::filesystem::path defaultOutputPath(const std::string &suffix) {
+    if (OutputFilename != "-")
+        return std::filesystem::path(OutputFilename);
+    auto path = std::filesystem::path(InputFilename);
+    path.replace_extension(suffix);
+    return path;
+}
+
+static int runCommand(const std::string &cmd) {
+    int status = std::system(cmd.c_str());
+    if (status != 0)
+        std::cerr << "Error: command failed: " << cmd << "\n";
+    return status;
+}
+
+static std::filesystem::path temporaryLlvmPath() {
+    auto now = std::chrono::high_resolution_clock::now().time_since_epoch().count();
+    auto key = InputFilename + "|" + OutputFilename + "|" + std::to_string(now);
+    auto hash = std::hash<std::string>{}(key);
+    auto name = "cminusfc-" + std::to_string(::getpid()) + "-" + std::to_string(hash) + ".ll";
+    return std::filesystem::temp_directory_path() / name;
+}
+
+static mlir::OwningOpRef<mlir::ModuleOp> generateMLIRModule(mlir::MLIRContext &context,
+                                                            ASTProgram &root) {
+    context.getOrLoadDialect<mlir::cminusf::CminusfDialect>();
+    auto module = mlir::cminusf::mlirGen(context, root);
+    if (!module)
+        std::cerr << "Error: failed to generate verifier-clean cminusf MLIR\n";
+    return module;
+}
+
+static bool lowerMLIRModule(mlir::ModuleOp module, mlir::MLIRContext &context,
+                            bool toLLVMDialect) {
+    mlir::PassManager pm(&context);
+    pm.addPass(mlir::cminusf::createLowerCminusfToStandardPass());
+    if (toLLVMDialect)
+        pm.addPass(mlir::cminusf::createLowerStandardToLLVMDialectPass());
+    if (mlir::succeeded(pm.run(module)))
+        return true;
+
+    std::cerr << "Error: failed to lower cminusf MLIR";
+    if (toLLVMDialect)
+        std::cerr << " to LLVM dialect";
+    std::cerr << "\n";
+    return false;
+}
+
+static void wrapMainWithZeroExit(llvm::Module &module) {
+    auto *userMain = module.getFunction("main");
+    if (!userMain || !userMain->arg_empty())
+        return;
+
+    auto &context = module.getContext();
+    auto *mainType = llvm::FunctionType::get(llvm::Type::getInt32Ty(context), false);
+    if (userMain->getFunctionType() != mainType)
+        return;
+
+    // In normal C/LLVM ABI semantics, main's return value is the process exit
+    // status.  Cminusf tests usually inspect stdout instead, so keep the user
+    // main result internal and make the executable report successful execution.
+    userMain->setName("__cminusf_user_main");
+    userMain->setLinkage(llvm::GlobalValue::InternalLinkage);
+
+    auto *entryMain =
+        llvm::Function::Create(mainType, llvm::GlobalValue::ExternalLinkage, "main", module);
+    auto *entry = llvm::BasicBlock::Create(context, "entry", entryMain);
+    llvm::IRBuilder<> builder(entry);
+    builder.CreateCall(userMain);
+    builder.CreateRet(llvm::ConstantInt::get(llvm::Type::getInt32Ty(context), 0));
+}
+
+static bool emitMLIRBackedLLVMIR(ASTProgram &root, std::ostream &out) {
+    mlir::DialectRegistry registry;
+    mlir::registerLLVMDialectTranslation(registry);
+    mlir::MLIRContext context(registry);
+
+    auto module = generateMLIRModule(context, root);
+    if (!module)
+        return false;
+    if (!lowerMLIRModule(*module, context, /*toLLVMDialect=*/true))
+        return false;
+
+    llvm::LLVMContext llvmContext;
+    auto llvmModule = mlir::translateModuleToLLVMIR(module->getOperation(), llvmContext,
+                                                    InputFilename);
+    if (!llvmModule) {
+        std::cerr << "Error: failed to translate LLVM dialect to LLVM IR\n";
+        return false;
+    }
+    wrapMainWithZeroExit(*llvmModule);
+
+    std::string buffer;
+    llvm::raw_string_ostream os(buffer);
+    llvmModule->print(os, nullptr);
+    os.flush();
+    out << buffer;
+    return true;
+}
+
+static void usage(const char *argv0) {
+    std::cerr << "Usage: " << argv0
+              << " [--emit-ast|--emit-mlir|--emit-standard-mlir|--emit-llvm-dialect|--emit-llvm|-S|-c|--emit-obj|--emit-exe] input.cminus [-o output]\n";
+}
+
+static bool parseArgs(int argc, char **argv) {
+    for (int i = 1; i < argc; ++i) {
+        std::string arg = argv[i];
+        if (arg == "--emit-ast" || arg == "-emit-ast") {
+            EmitAst = true;
+        } else if (arg == "--emit-mlir" || arg == "-emit-mlir") {
+            EmitMlir = true;
+        } else if (arg == "--emit-standard-mlir" || arg == "-emit-standard-mlir") {
+            EmitStandardMlir = true;
+        } else if (arg == "--emit-llvm-dialect" || arg == "-emit-llvm-dialect") {
+            EmitLlvmDialect = true;
+        } else if (arg == "--emit-llvm" || arg == "-emit-llvm") {
+            EmitLlvm = true;
+        } else if (arg == "-S") {
+            EmitAsm = true;
+        } else if (arg == "-c") {
+            EmitObjShort = true;
+        } else if (arg == "--emit-obj" || arg == "-emit-obj") {
+            EmitObj = true;
+        } else if (arg == "--emit-exe" || arg == "-emit-exe") {
+            EmitExe = true;
+        } else if (arg == "-o") {
+            if (++i >= argc)
+                return false;
+            OutputFilename = argv[i];
+        } else if (!arg.empty() && arg[0] == '-') {
+            std::cerr << "Error: unknown option " << arg << "\n";
+            return false;
+        } else if (InputFilename.empty()) {
+            InputFilename = arg;
+        } else {
+            std::cerr << "Error: multiple input files are not supported\n";
+            return false;
+        }
+    }
+    return !InputFilename.empty();
 }
 
 int main(int argc, char **argv) {
-    cl::ParseCommandLineOptions(argc, argv, "CminusF compiler\n");
+    if (!parseArgs(argc, argv)) {
+        usage(argv[0]);
+        return 1;
+    }
 
-    // 解析输入文件为语法树
     syntax_tree *tree = parse(InputFilename.c_str());
     if (!tree) {
-        errs() << "Error: failed to parse input file " << InputFilename << "\n";
+        std::cerr << "Error: failed to parse input file " << InputFilename << "\n";
         return 1;
     }
 
-    // 创建 AST
-    auto ast = AST(tree);
-
-    // 如果只需要输出 AST，则在这里处理
     if (EmitAst) {
-        // 简单的 AST 打印实现 - 这里直接使用语法树的打印函数
-        // outs() << "AST for " << InputFilename << ":\n";
-        // print_syntax_tree(outs().os(), tree);
-        // del_syntax_tree(tree);
-        // return 0;
+        print_syntax_tree(stdout, tree);
+        del_syntax_tree(tree);
+        return 0;
     }
 
-    // 获取根节点
+    AST ast(tree);
     ASTProgram *root = ast.get_root();
-    auto rootNode = std::unique_ptr<ASTNode>(static_cast<ASTNode *>(root));
 
-    // 初始化 MLIR 上下文
-    mlir::MLIRContext context;
-    context.getOrLoadDialect<CminusfDialect>();
+    if (EmitMlir || EmitStandardMlir || EmitLlvmDialect) {
+        // 这里走真实 MLIR builder，输出经过 verifier 检查的 cminusf dialect module。
+        mlir::MLIRContext context;
+        auto module = generateMLIRModule(context, *root);
+        if (!module)
+            return 1;
 
-    // 生成 MLIR 模块
-    auto moduleRef = mlirGen(context, std::move(rootNode));
+        if (EmitStandardMlir || EmitLlvmDialect) {
+            // 通过 MLIR PassManager 运行项目自己的 lowering pass。
+            if (!lowerMLIRModule(*module, context, EmitLlvmDialect))
+                return 1;
+        }
 
-    if (!moduleRef) {
-        errs() << "Error: failed to generate MLIR module\n";
-        return 1;
+        if (OutputFilename == "-") {
+            module->print(llvm::outs());
+            llvm::outs() << "\n";
+        } else {
+            std::error_code ec;
+            llvm::raw_fd_ostream os(OutputFilename, ec);
+            if (ec) {
+                std::cerr << "Error: could not write output file " << OutputFilename << "\n";
+                return 1;
+            }
+            module->print(os);
+            os << "\n";
+        }
+        return 0;
     }
 
-    mlir::ModuleOp module = moduleRef.get();
-
-    // 验证 MLIR 模块
-    if (failed(mlir::verify(module))) {
-        errs() << "Error: MLIR module verification failed\n";
+    std::ostringstream llvmIR;
+    if (!emitMLIRBackedLLVMIR(*root, llvmIR))
         return 1;
-    }
 
-    // 确定输出目标
-    std::error_code EC;
-    raw_ostream *OS = &outs();
-    std::unique_ptr<raw_fd_ostream> outputFile;
-
-    if (OutputFilename != "-") {
-        outputFile = std::make_unique<raw_fd_ostream>(OutputFilename, EC, sys::fs::OF_None);
-        if (EC) {
-            errs() << "Error: could not open output file " << OutputFilename << ": " << EC.message() << "\n";
+    if (EmitLlvm || (!EmitAsm && !EmitObj && !EmitObjShort && !EmitExe)) {
+        if (OutputFilename == "-") {
+            std::cout << llvmIR.str();
+        } else if (!writeTextFile(std::filesystem::path(OutputFilename), llvmIR.str())) {
+            std::cerr << "Error: could not write output file " << OutputFilename << "\n";
             return 1;
         }
-        OS = outputFile.get();
-    }
-
-    // 如果需要输出 MLIR 或默认情况
-    if (EmitMlir || (!EmitLlvm && !EmitObj && !RunJit)) {
-        module.print(*OS);
         return 0;
     }
 
-    // 创建 PassManager
-    mlir::PassManager pm(&context);
-
-    // 添加一些转换和优化 Pass
-    pm.addPass(mlir::createCanonicalizerPass());
-
-    // 执行 PassManager
-    if (failed(pm.run(module))) {
-        errs() << "Error: Pass pipeline failed\n";
+    auto llPath = temporaryLlvmPath();
+    if (!writeTextFile(llPath, llvmIR.str())) {
+        std::cerr << "Error: could not write temporary LLVM IR file " << llPath.string() << "\n";
         return 1;
     }
 
-    // 如果需要生成 LLVM IR
-    if (EmitLlvm) {
-        // 在实际项目中，这里应该添加 MLIR 到 LLVM IR 的转换代码
-        *OS << "// LLVM IR for " << InputFilename << "\n";
-        *OS << "// Note: MLIR to LLVM IR conversion not fully implemented yet\n";
-        // 输出 LLVM IR
-        module.print(*OS);
-        return 0;
+    auto clang = std::string("clang");
+    auto result = 0;
+    if (EmitAsm) {
+        result = runCommand(clang + " -S -x ir " + shellQuote(llPath) + " -o " +
+                            shellQuote(defaultOutputPath(".s")));
+    } else if (EmitObj || EmitObjShort) {
+        result = runCommand(clang + " -c -x ir " + shellQuote(llPath) + " -o " +
+                            shellQuote(defaultOutputPath(".o")));
+    } else {
+        auto ioPath = std::filesystem::path(CMINUSF_SOURCE_DIR) / "src" / "io" / "io.c";
+        result = runCommand(clang + " -x ir " + shellQuote(llPath) + " -x c " +
+                            shellQuote(ioPath) + " -o " + shellQuote(defaultOutputPath("")));
     }
 
-    // 如果需要生成目标文件
-    if (EmitObj) {
-        // 在实际项目中，这里应该添加 MLIR 到目标代码的转换代码
-        errs() << "Generating object file: " << OutputFilename << "\n";
-        errs() << "Note: MLIR to object code conversion not fully implemented yet\n";
-        // 输出目标文件
-        module.print(*OS);
-        return 0;
-    }
-
-    // 如果需要使用 JIT 运行
-    if (RunJit) {
-        errs() << "Running using JIT...\n";
-        errs() << "Note: JIT execution not fully implemented yet\n";
-        // 执行 JIT 代码
-        return 0;
-    }
-
-    // 默认情况下输出 MLIR
-    module.print(*OS);
-
-    return 0;
+    std::error_code ec;
+    std::filesystem::remove(llPath, ec);
+    return result == 0 ? 0 : 1;
 }

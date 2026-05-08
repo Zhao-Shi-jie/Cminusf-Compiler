@@ -1,27 +1,3 @@
-// #include "MLIRGen.h"
-// #include "Dialect.h"
-// #include "ast.hpp"
-
-// #include "mlir/IR/Builders.h"
-// #include "mlir/IR/BuiltinOps.h"
-// #include "mlir/IR/MLIRContext.h"
-// #include "mlir/IR/Verifier.h"
-
-// using namespace mlir::cminusf;
-// using namespace cminusf;
-
-// namespace {
-
-// class MLIRGenImpl {};
-
-// } // namespace
-
-// namespace cminusf {
-// mlir::ModuleOp mlirGen(mlir::MLIRContext &context, std::unique_ptr<ASTNode> root) {
-//     // return MLIRGenImpl(context).mlirGen(std::move(root));
-// }
-// } // namespace cminusf
-
 #include "MLIRGen.h"
 #include "Dialect.h"
 #include "ast.hpp"
@@ -29,442 +5,396 @@
 #include "mlir/IR/Builders.h"
 #include "mlir/IR/BuiltinOps.h"
 #include "mlir/IR/BuiltinTypes.h"
-#include "mlir/IR/MLIRContext.h"
 #include "mlir/IR/Verifier.h"
-
 #include "llvm/ADT/ScopedHashTable.h"
-#include "llvm/ADT/StringRef.h"
-#include <cstddef>
+#include "llvm/Support/Casting.h"
+#include "llvm/Support/raw_ostream.h"
+
 #include <memory>
+#include <string>
+#include <vector>
 
 using namespace mlir::cminusf;
-// using namespace cminusf;
 
 namespace {
 
-/// Implementation of a simple MLIR emission from the C-minus-f AST.
+struct Symbol {
+    mlir::Value ref;
+    mlir::Type elementType;
+    bool isArray = false;
+};
+
 class MLIRGenImpl {
   public:
-    MLIRGenImpl(mlir::MLIRContext &context) : builder(&context) {}
+    explicit MLIRGenImpl(mlir::MLIRContext &context) : builder(&context) {}
 
-    /// Public API: convert the AST for a C-minus-f module to an MLIR Module operation.
-    mlir::ModuleOp mlirGen(std::unique_ptr<ASTNode> &root) {
-        // Create an empty MLIR module
-        theModule = mlir::ModuleOp::create(builder.getUnknownLoc());
+    mlir::OwningOpRef<mlir::ModuleOp> mlirGen(ASTProgram &program) {
+        auto module = mlir::ModuleOp::create(builder.getUnknownLoc());
+        theModule = module;
 
-        // Process the AST root node
-        if (auto *program = dynamic_cast<ASTProgram *>(root.get())) {
-            processProgram(*program);
-        } else {
-            llvm::errs() << "Error: Expected ASTProgram as root node\n";
-            return nullptr;
+        builder.setInsertionPointToEnd(module.getBody());
+        declareRuntimeFunctions();
+
+        for (auto &decl : program.declarations) {
+            // MLIR/LLVM is built with RTTI disabled in this project, so this
+            // path uses ASTKind instead of dynamic_cast/dynamic_pointer_cast.
+            if (decl->getKind() == ASTKind::VarDeclaration)
+                emitGlobal(static_cast<ASTVarDeclaration &>(*decl));
+            else if (decl->getKind() == ASTKind::FunDeclaration)
+                emitFunction(static_cast<ASTFunDeclaration &>(*decl));
         }
 
-        // Verify the module after construction
-        if (failed(mlir::verify(theModule))) {
-            theModule.emitError("module verification error");
+        if (failed(mlir::verify(module)))
             return nullptr;
-        }
-
-        return theModule;
+        return module;
     }
 
   private:
-    /// The module being constructed
     mlir::ModuleOp theModule;
-
-    /// The builder is a helper class to create IR inside a function
     mlir::OpBuilder builder;
+    llvm::ScopedHashTable<llvm::StringRef, Symbol> symbols;
+    mlir::Type currentReturnType;
 
-    /// Symbol table for variable and function lookup
-    llvm::ScopedHashTable<llvm::StringRef, mlir::Value> symbolTable;
+    mlir::Location loc() { return builder.getUnknownLoc(); }
 
-    /// Map C-minus-f type to MLIR type
-    mlir::Type getMLIRType(CminusType type) {
-        switch (type) {
-        case TYPE_INT:
-            return builder.getI32Type();
-        case TYPE_FLOAT:
+    mlir::Type scalarType(CminusType type) {
+        if (type == TYPE_FLOAT)
             return builder.getF32Type();
-        case TYPE_VOID:
-            return builder.getNoneType();
-        default:
-            llvm::errs() << "Unknown C-minus-f type\n";
-            return nullptr;
-        }
+        if (type == TYPE_VOID)
+            return {};
+        return builder.getI32Type();
     }
 
-    /// Process the program node (root of AST)
-    void processProgram(ASTProgram &program) {
-        // Set insertion point to the module body
-        builder.setInsertionPointToEnd(theModule.getBody());
-
-        // Process all declarations (variables and functions)
-        for (auto &decl : program.declarations) {
-            if (auto varDecl = std::dynamic_pointer_cast<ASTVarDeclaration>(decl)) {
-                processGlobalVarDecl(*varDecl);
-            } else if (auto funDecl = std::dynamic_pointer_cast<ASTFunDeclaration>(decl)) {
-                processFunDecl(*funDecl);
-            }
-        }
+    mlir::MemRefType scalarRefType(mlir::Type elementType) {
+        // Cminusf variables are l-values.  Represent every scalar variable as a
+        // one-element memref so load/store lowering can be uniform.
+        return mlir::MemRefType::get({1}, elementType);
     }
 
-    /// Process global variable declaration
-    void processGlobalVarDecl(ASTVarDeclaration &varDecl) {
-        mlir::Type type = getMLIRType(varDecl.type);
-
-        // Check if variable is an array
-        if (varDecl.num) {
-            // Create array variable
-            mlir::StringAttr nameAttr = builder.getStringAttr(varDecl.id);
-            mlir::IntegerAttr sizeAttr = builder.getI32IntegerAttr(varDecl.num->i_val);
-
-            // Create var_decl operation for array
-            builder.create<VarDeclOp>(builder.getUnknownLoc(), nameAttr, type, sizeAttr);
-        } else {
-            // Create scalar variable
-            mlir::StringAttr nameAttr = builder.getStringAttr(varDecl.id);
-
-            // Create var_decl operation for scalar
-            builder.create<VarDeclOp>(builder.getUnknownLoc(), nameAttr, type);
-        }
+    mlir::Type arrayRefType(mlir::Type elementType, int64_t size) {
+        return mlir::MemRefType::get({size}, elementType);
     }
 
-    /// Process function declaration
-    void processFunDecl(ASTFunDeclaration &funDecl) {
-        // Create a function type based on return type and parameters
-        std::vector<mlir::Type> paramTypes;
-        for (auto &param : funDecl.params) {
-            paramTypes.push_back(getMLIRType(param->type));
+    mlir::Type arrayParamType(mlir::Type elementType) {
+        // Array parameters decay to a dynamically-sized memref reference.
+        return mlir::MemRefType::get({mlir::ShapedType::kDynamic}, elementType);
+    }
+
+    void declareRuntimeFunctions() {
+        // Runtime declarations are normal cminusf functions.  Calls verify by
+        // looking up these symbols before the user program is lowered further.
+        createFunctionDecl("input", {}, {builder.getI32Type()}, /*withBody=*/false);
+        createFunctionDecl("output", {builder.getI32Type()}, {}, /*withBody=*/false);
+        createFunctionDecl("outputFloat", {builder.getF32Type()}, {}, /*withBody=*/false);
+        createFunctionDecl("neg_idx_except", {}, {}, /*withBody=*/false);
+    }
+
+    FunDeclOp createFunctionDecl(llvm::StringRef name, llvm::ArrayRef<mlir::Type> inputs,
+                                 llvm::ArrayRef<mlir::Type> results, bool withBody) {
+        auto type = builder.getFunctionType(inputs, results);
+        auto func = builder.create<FunDeclOp>(loc(), name, type);
+        if (!withBody)
+            return func;
+
+        auto *entry = new mlir::Block();
+        for (mlir::Type input : inputs)
+            entry->addArgument(input, loc());
+        func.getBody().push_back(entry);
+        return func;
+    }
+
+    void emitGlobal(ASTVarDeclaration &decl) {
+        auto elementType = scalarType(decl.type);
+        auto type = decl.num ? arrayRefType(elementType, decl.num->i_val) : scalarRefType(elementType);
+        builder.create<GlobalOp>(loc(), decl.id, type);
+    }
+
+    void emitFunction(ASTFunDeclaration &decl) {
+        std::vector<mlir::Type> inputs;
+        for (auto &param : decl.params) {
+            auto elementType = scalarType(param->type);
+            inputs.push_back(param->isarray ? arrayParamType(elementType) : elementType);
         }
 
-        // Determine return type
-        mlir::Type returnType = getMLIRType(funDecl.type);
-        mlir::FunctionType funcType;
+        std::vector<mlir::Type> results;
+        auto returnType = scalarType(decl.type);
+        if (decl.id == "main" && !returnType)
+            returnType = builder.getI32Type();
+        if (returnType)
+            results.push_back(returnType);
 
-        if (funDecl.type == TYPE_VOID) {
-            // Void function has no results
-            funcType = builder.getFunctionType(paramTypes, std::nullopt);
-        } else {
-            // Function with a return value
-            funcType = builder.getFunctionType(paramTypes, returnType);
-        }
+        auto func = createFunctionDecl(decl.id, inputs, results, /*withBody=*/true);
+        currentReturnType = returnType;
 
-        // Create the function operation
-        auto loc = builder.getUnknownLoc();
-        auto funcOp = builder.create<FunDeclOp>(loc, funDecl.id, funcType);
+        mlir::OpBuilder::InsertionGuard guard(builder);
+        auto &entry = func.getBody().front();
+        builder.setInsertionPointToStart(&entry);
 
-        // Create entry block in function body
-        auto &entryBlock = funcOp.getBody().emplaceBlock();
-        builder.setInsertionPointToStart(&entryBlock);
+        llvm::ScopedHashTableScope<llvm::StringRef, Symbol> functionScope(symbols);
+        for (size_t i = 0; i < decl.params.size(); ++i) {
+            auto &param = decl.params[i];
+            auto elementType = scalarType(param->type);
+            auto arg = entry.getArgument(i);
 
-        // Create a new scope for the function
-        llvm::ScopedHashTableScope<llvm::StringRef, mlir::Value> functionScope(symbolTable);
-
-        // Add parameters to symbol table
-        for (size_t i = 0; i < funDecl.params.size(); i++) {
-            auto &param = funDecl.params[i];
-            auto paramType = getMLIRType(param->type);
-
-            // Create function arguments
-            auto arg = entryBlock.addArgument(paramType, loc);
-            symbolTable.insert(param->id, arg);
-        }
-
-        // Process function body
-        if (funDecl.compound_stmt) {
-            processCompoundStmt(*funDecl.compound_stmt);
-        }
-
-        // Add implicit return if needed
-        if (builder.getBlock()->empty() || !llvm::isa<ReturnOp>(builder.getBlock()->back())) {
-            if (funDecl.type == TYPE_VOID) {
-                builder.create<ReturnOp>(loc, nullptr);
+            if (param->isarray) {
+                // Array parameters are already references; no local var op is needed.
+                symbols.insert(param->id, {arg, elementType, true});
             } else {
-                // Non-void function should have explicit returns in all code paths
-                llvm::errs() << "Warning: Non-void function '" << funDecl.id
-                             << "' missing return statement\n";
-                builder.create<ReturnOp>(loc, nullptr);
+                // Scalar parameters are copied into a local l-value slot.
+                auto slot = builder.create<VarOp>(loc(), scalarRefType(elementType),
+                                                  builder.getStringAttr(param->id));
+                builder.create<StoreOp>(loc(), arg, slot.getResult());
+                symbols.insert(param->id, {slot.getResult(), elementType, false});
             }
         }
+
+        if (decl.compound_stmt)
+            emitCompound(*decl.compound_stmt);
+
+        if (entry.empty() || !entry.back().hasTrait<mlir::OpTrait::IsTerminator>())
+            emitDefaultReturn();
     }
 
-    /// Process compound statement (block of code)
-    void processCompoundStmt(ASTCompoundStmt &compoundStmt) {
-        // Create a new scope for local variables
-        llvm::ScopedHashTableScope<llvm::StringRef, mlir::Value> blockScope(symbolTable);
-
-        // Process local variable declarations
-        for (auto &varDecl : compoundStmt.local_declarations) {
-            processLocalVarDecl(*varDecl);
-        }
-
-        // Process statements
-        for (auto &stmt : compoundStmt.statement_list) {
-            processStmt(*stmt);
-        }
+    void emitCompound(ASTCompoundStmt &stmt) {
+        llvm::ScopedHashTableScope<llvm::StringRef, Symbol> scope(symbols);
+        for (auto &decl : stmt.local_declarations)
+            emitLocal(*decl);
+        for (auto &statement : stmt.statement_list)
+            emitStatement(*statement);
     }
 
-    /// Process local variable declaration
-    void processLocalVarDecl(ASTVarDeclaration &varDecl) {
-        mlir::Type type = getMLIRType(varDecl.type);
-        auto loc = builder.getUnknownLoc();
-
-        // Create var_decl operation and register in symbol table
-        if (varDecl.num) {
-            // Array variable
-            mlir::StringAttr nameAttr = builder.getStringAttr(varDecl.id);
-            mlir::IntegerAttr sizeAttr = builder.getI32IntegerAttr(varDecl.num->i_val);
-
-            auto varOp = builder.create<VarDeclOp>(loc, nameAttr, type, sizeAttr);
-            symbolTable.insert(varDecl.id, varOp.getResult());
-        } else {
-            // Scalar variable
-            mlir::StringAttr nameAttr = builder.getStringAttr(varDecl.id);
-
-            auto varOp = builder.create<VarDeclOp>(loc, nameAttr, type);
-            symbolTable.insert(varDecl.id, varOp.getResult());
-        }
+    void emitLocal(ASTVarDeclaration &decl) {
+        auto elementType = scalarType(decl.type);
+        auto refType = decl.num ? arrayRefType(elementType, decl.num->i_val) : scalarRefType(elementType);
+        auto var = builder.create<VarOp>(loc(), refType, builder.getStringAttr(decl.id));
+        symbols.insert(decl.id, {var.getResult(), elementType, decl.num != nullptr});
     }
 
-    /// Process statement
-    void processStmt(ASTStatement &stmt) {
-        auto loc = builder.getUnknownLoc();
-
-        if (auto *exprStmt = dynamic_cast<ASTExpressionStmt *>(&stmt)) {
-            // Expression statement
-            if (exprStmt->expression) {
-                processExpression(*exprStmt->expression);
-            }
-        } else if (auto *selStmt = dynamic_cast<ASTSelectionStmt *>(&stmt)) {
-            // Selection statement (if-else)
-            mlir::Value condValue = processExpression(*selStmt->expression);
-
-            // Create if operation with then and else regions
-            auto ifOp = builder.create<IfOp>(
-                loc, condValue,
-                [&](mlir::OpBuilder &builder, mlir::Location loc) {
-                    // Then branch
-                    this->builder.setInsertionPoint(builder.getBlock(), builder.getBlock()->begin());
-                    processStmt(*selStmt->if_statement);
-                    builder.create<YieldOp>(loc);
-                },
-                [&](mlir::OpBuilder &builder, mlir::Location loc) {
-                    // Else branch (if exists)
-                    this->builder.setInsertionPoint(builder.getBlock(), builder.getBlock()->begin());
-                    if (selStmt->else_statement) {
-                        processStmt(*selStmt->else_statement);
-                    }
-                    builder.create<YieldOp>(loc);
-                });
-
-            // Reset insertion point after if operation
-            builder.setInsertionPointAfter(ifOp);
-
-        } else if (auto *iterStmt = dynamic_cast<ASTIterationStmt *>(&stmt)) {
-            // Iteration statement (while)
-            mlir::Value condValue = processExpression(*iterStmt->expression);
-
-            // Create while operation
-            auto whileOp =
-                builder.create<WhileOp>(loc, condValue, [&](mlir::OpBuilder &builder, mlir::Location loc) {
-                    // While body
-                    this->builder.setInsertionPoint(builder.getBlock(), builder.getBlock()->begin());
-                    processStmt(*iterStmt->statement);
-                    builder.create<YieldOp>(loc);
-                });
-
-            // Reset insertion point after while operation
-            builder.setInsertionPointAfter(whileOp);
-
-        } else if (auto *returnStmt = dynamic_cast<ASTReturnStmt *>(&stmt)) {
-            // Return statement
-            if (returnStmt->expression) {
-                // Return with value
-                mlir::Value retVal = processExpression(*returnStmt->expression);
-                builder.create<ReturnOp>(loc, retVal);
+    void emitStatement(ASTStatement &stmt) {
+        if (stmt.getKind() == ASTKind::ExpressionStmt) {
+            auto *exprStmt = static_cast<ASTExpressionStmt *>(&stmt);
+            if (exprStmt->expression)
+                emitExpression(*exprStmt->expression);
+            return;
+        }
+        if (stmt.getKind() == ASTKind::CompoundStmt) {
+            emitCompound(static_cast<ASTCompoundStmt &>(stmt));
+            return;
+        }
+        if (stmt.getKind() == ASTKind::ReturnStmt) {
+            auto *ret = static_cast<ASTReturnStmt *>(&stmt);
+            if (ret->expression) {
+                auto value = castValue(emitExpression(*ret->expression), currentReturnType);
+                builder.create<ReturnOp>(loc(), value);
             } else {
-                // Void return
-                builder.create<ReturnOp>(loc, nullptr);
+                emitDefaultReturn();
             }
-        } else if (auto *compoundStmt = dynamic_cast<ASTCompoundStmt *>(&stmt)) {
-            // Compound statement
-            processCompoundStmt(*compoundStmt);
+            return;
+        }
+        if (stmt.getKind() == ASTKind::SelectionStmt) {
+            auto *sel = static_cast<ASTSelectionStmt *>(&stmt);
+            auto cond = castValue(emitExpression(*sel->expression), builder.getI32Type());
+            auto ifOp = builder.create<IfOp>(loc(), cond);
+            fillRegion(ifOp.getThenBranch(), [&] { emitStatement(*sel->if_statement); });
+            fillRegion(ifOp.getElseBranch(), [&] {
+                if (sel->else_statement)
+                    emitStatement(*sel->else_statement);
+            });
+            return;
+        }
+        if (stmt.getKind() == ASTKind::IterationStmt) {
+            auto *iter = static_cast<ASTIterationStmt *>(&stmt);
+            auto whileOp = builder.create<WhileOp>(loc());
+            fillRegion(whileOp.getCondition(), [&] {
+                auto cond = castValue(emitExpression(*iter->expression), builder.getI32Type());
+                builder.create<YieldOp>(loc(), cond);
+            });
+            fillRegion(whileOp.getBody(), [&] { emitStatement(*iter->statement); });
+        }
+    }
+
+    template <typename BodyBuilder>
+    void fillRegion(mlir::Region &region, BodyBuilder bodyBuilder) {
+        mlir::Block &block = region.empty() ? region.emplaceBlock() : region.front();
+        mlir::OpBuilder::InsertionGuard guard(builder);
+        builder.setInsertionPointToStart(&block);
+        bodyBuilder();
+        if (block.empty() || !block.back().hasTrait<mlir::OpTrait::IsTerminator>())
+            builder.create<YieldOp>(loc());
+    }
+
+    void emitDefaultReturn() {
+        if (!currentReturnType) {
+            builder.create<ReturnOp>(loc(), nullptr);
+        } else if (currentReturnType.isF32()) {
+            auto zero = builder.create<ConstantOp>(loc(), 0.0f);
+            builder.create<ReturnOp>(loc(), zero.getResult());
         } else {
-            llvm::errs() << "Unknown statement type\n";
+            auto zero = builder.create<ConstantOp>(loc(), 0);
+            builder.create<ReturnOp>(loc(), zero.getResult());
         }
     }
 
-    /// Process expression and return the resulting value
-    mlir::Value processExpression(ASTExpression &expr) {
-        auto loc = builder.getUnknownLoc();
-
-        if (auto *assignExpr = dynamic_cast<ASTAssignExpression *>(&expr)) {
-            // Assignment expression
-            mlir::Value lhsVar = processVar(*assignExpr->var);
-            mlir::Value rhsExpr = processExpression(*assignExpr->expression);
-
-            return builder.create<AssignOp>(loc, lhsVar, rhsExpr);
-
-        } else if (auto *simpleExpr = dynamic_cast<ASTSimpleExpression *>(&expr)) {
-            // Simple expression (comparison)
-
-            // If only left side exists, just return it
-            if (!simpleExpr->additive_expression_r) {
-                return processAdditiveExpression(*simpleExpr->additive_expression_l);
-            }
-
-            // Process both sides of comparison
-            mlir::Value lhs = processAdditiveExpression(*simpleExpr->additive_expression_l);
-            mlir::Value rhs = processAdditiveExpression(*simpleExpr->additive_expression_r);
-
-            // Map RelOp to CmpPredicate
-            std::string predStr;
-            switch (simpleExpr->op) {
-            case OP_LE:
-                predStr = "le";
-                break;
-            case OP_LT:
-                predStr = "lt";
-                break;
-            case OP_GT:
-                predStr = "gt";
-                break;
-            case OP_GE:
-                predStr = "ge";
-                break;
-            case OP_EQ:
-                predStr = "eq";
-                break;
-            case OP_NEQ:
-                predStr = "ne";
-                break;
-            default:
-                llvm::errs() << "Unknown comparison operator\n";
-                break;
-            }
-
-            return builder.create<CmpOp>(loc, lhs, rhs, builder.getStringAttr(predStr));
+    mlir::Value emitExpression(ASTExpression &expr) {
+        if (expr.getKind() == ASTKind::AssignExpression) {
+            auto *assign = static_cast<ASTAssignExpression *>(&expr);
+            auto lhs = emitVarRef(*assign->var);
+            auto rhs = castValue(emitExpression(*assign->expression), lhs.elementType);
+            builder.create<StoreOp>(loc(), rhs, lhs.ref);
+            return rhs;
         }
-
-        // else if (auto *var = dynamic_cast<ASTVar *>(&expr)) {
-        //     // Variable reference
-        //     return processVar(*var);
-
-        // } else if (auto *call = dynamic_cast<ASTCall *>(&expr)) {
-        //     // Function call
-        //     std::vector<mlir::Value> arguments;
-
-        //     for (auto &arg : call->args) {
-        //         arguments.push_back(processExpression(*arg));
-        //     }
-
-        //     return builder.create<CallOp>(loc, llvm::StringRef(call->id), arguments);
-        // }
-
-        llvm::errs() << "Unknown expression type\n";
-        return nullptr;
+        return emitSimple(*static_cast<ASTSimpleExpression *>(&expr));
     }
 
-    /// Process variable reference and return the resulting value
-    mlir::Value processVar(ASTVar &var) {
-        // Look up variable in symbol table
-        if (auto value = symbolTable.lookup(var.id)) {
+    mlir::Value emitSimple(ASTSimpleExpression &expr) {
+        auto lhs = emitAdditive(*expr.additive_expression_l);
+        if (!expr.additive_expression_r)
+            return lhs;
+        auto rhs = emitAdditive(*expr.additive_expression_r);
+        auto common = commonType(lhs.getType(), rhs.getType());
+        lhs = castValue(lhs, common);
+        rhs = castValue(rhs, common);
+        return builder.create<CmpOp>(loc(), lhs, rhs, relName(expr.op)).getResult();
+    }
+
+    mlir::Value emitAdditive(ASTAdditiveExpression &expr) {
+        auto rhs = emitTerm(*expr.term);
+        if (!expr.additive_expression)
+            return rhs;
+        auto lhs = emitAdditive(*expr.additive_expression);
+        auto common = commonType(lhs.getType(), rhs.getType());
+        lhs = castValue(lhs, common);
+        rhs = castValue(rhs, common);
+        return builder
+            .create<BinaryOp>(loc(), expr.op == OP_PLUS ? "add" : "sub", lhs, rhs)
+            .getResult();
+    }
+
+    mlir::Value emitTerm(ASTTerm &term) {
+        auto rhs = emitFactor(*term.factor);
+        if (!term.term)
+            return rhs;
+        auto lhs = emitTerm(*term.term);
+        auto common = commonType(lhs.getType(), rhs.getType());
+        lhs = castValue(lhs, common);
+        rhs = castValue(rhs, common);
+        return builder
+            .create<BinaryOp>(loc(), term.op == OP_MUL ? "mul" : "div", lhs, rhs)
+            .getResult();
+    }
+
+    mlir::Value emitFactor(ASTFactor &factor) {
+        if (factor.getKind() == ASTKind::Num) {
+            auto *num = static_cast<ASTNum *>(&factor);
+            if (num->type == TYPE_FLOAT)
+                return builder.create<ConstantOp>(loc(), num->f_val).getResult();
+            return builder.create<ConstantOp>(loc(), num->i_val).getResult();
+        }
+        if (factor.getKind() == ASTKind::Var) {
+            auto ref = emitVarRef(static_cast<ASTVar &>(factor));
+            return builder.create<LoadOp>(loc(), ref.elementType, ref.ref).getResult();
+        }
+        if (factor.getKind() == ASTKind::Call)
+            return emitCall(static_cast<ASTCall &>(factor));
+        return emitExpression(static_cast<ASTExpression &>(factor));
+    }
+
+    Symbol emitVarRef(ASTVar &var) {
+        Symbol symbol;
+        if (symbols.count(var.id)) {
+            symbol = symbols.lookup(var.id);
+        } else {
+            auto global = theModule.lookupSymbol<GlobalOp>(var.id);
+            auto refType = global ? global.getType()
+                                  : scalarRefType(builder.getI32Type());
+            auto element = refType.cast<mlir::MemRefType>().getElementType();
+            auto varOp = builder.create<VarOp>(loc(), refType, builder.getStringAttr(var.id));
+            // Global identifiers are l-value references, not declarations of a
+            // fresh local slot.  Mark them so the lowering pass emits
+            // memref.get_global instead of memref.alloc.
+            if (global)
+                varOp->setAttr("global_ref", builder.getUnitAttr());
+            symbol = {varOp, element, true};
+        }
+
+        if (!var.expression)
+            return symbol;
+
+        auto index = castValue(emitExpression(*var.expression), builder.getI32Type());
+        auto sub = builder.create<SubscriptOp>(loc(), scalarRefType(symbol.elementType), symbol.ref, index);
+        return {sub.getResult(), symbol.elementType, false};
+    }
+
+    mlir::Value emitCall(ASTCall &call) {
+        std::vector<mlir::Value> args;
+        auto callee = theModule.lookupSymbol<FunDeclOp>(call.id);
+        auto inputTypes = callee ? callee.getFunctionType().getInputs() : llvm::ArrayRef<mlir::Type>{};
+
+        for (size_t i = 0; i < call.args.size(); ++i) {
+            if (i < inputTypes.size() && inputTypes[i].isa<mlir::MemRefType>()) {
+                if (auto *var = extractVariable(*call.args[i])) {
+                    args.push_back(emitVarRef(*var).ref);
+                    continue;
+                }
+            }
+            args.push_back(emitExpression(*call.args[i]));
+        }
+
+        auto callOp = builder.create<CallOp>(loc(), call.id, args);
+        if (callOp.getNumResults() == 0)
+            return {};
+        return callOp.getResult();
+    }
+
+    mlir::Value castValue(mlir::Value value, mlir::Type targetType) {
+        if (!value || value.getType() == targetType)
             return value;
-        } else {
-            llvm::errs() << "Unknown variable: " << var.id << "\n";
+        // Keep the source dialect small: mixed numeric expressions are marked
+        // with MLIR's builtin cast placeholder, then materialized as concrete
+        // arith casts by the cminusf-to-standard lowering pass.
+        return builder.create<mlir::UnrealizedConversionCastOp>(loc(), targetType, value)
+            .getResult(0);
+    }
+
+    mlir::Type commonType(mlir::Type lhs, mlir::Type rhs) {
+        if (lhs.isF32() || rhs.isF32())
+            return builder.getF32Type();
+        return builder.getI32Type();
+    }
+
+    static ASTVar *extractVariable(ASTExpression &expr) {
+        if (expr.getKind() != ASTKind::SimpleExpression)
             return nullptr;
-        }
+        auto *simple = static_cast<ASTSimpleExpression *>(&expr);
+        if (simple->additive_expression_r)
+            return nullptr;
+        auto *add = simple->additive_expression_l.get();
+        if (!add || add->additive_expression)
+            return nullptr;
+        auto *term = add->term.get();
+        if (!term || term->term)
+            return nullptr;
+        if (term->factor->getKind() != ASTKind::Var)
+            return nullptr;
+        return static_cast<ASTVar *>(term->factor.get());
     }
 
-    /// Process additive expression and return the resulting value
-    mlir::Value processAdditiveExpression(ASTAdditiveExpression &addExpr) {
-        auto loc = builder.getUnknownLoc();
-
-        // Process term
-        mlir::Value result = processTerm(*addExpr.term);
-
-        // If there's no left side, just return the term
-        if (!addExpr.additive_expression) {
-            return result;
+    static llvm::StringRef relName(RelOp op) {
+        switch (op) {
+        case OP_LE:
+            return "le";
+        case OP_LT:
+            return "lt";
+        case OP_GT:
+            return "gt";
+        case OP_GE:
+            return "ge";
+        case OP_EQ:
+            return "eq";
+        case OP_NEQ:
+            return "ne";
         }
-
-        // Process left side (recursive)
-        mlir::Value lhs = processAdditiveExpression(*addExpr.additive_expression);
-
-        // Create binary operation
-        std::string opStr;
-        switch (addExpr.op) {
-        case OP_PLUS:
-            opStr = "add";
-            break;
-        case OP_MINUS:
-            opStr = "sub";
-            break;
-        }
-
-        return builder.create<BinaryOp>(loc, builder.getStringAttr(opStr), lhs, result);
-    }
-
-    /// Process term and return the resulting value
-    mlir::Value processTerm(ASTTerm &term) {
-        auto loc = builder.getUnknownLoc();
-
-        // Process factor
-        mlir::Value result = processFactor(*term.factor);
-
-        // If there's no left side, just return the factor
-        if (!term.term) {
-            return result;
-        }
-
-        // Process left side (recursive)
-        mlir::Value lhs = processTerm(*term.term);
-
-        // Create binary operation
-        std::string opStr;
-        switch (term.op) {
-        case OP_MUL:
-            opStr = "mul";
-            break;
-        case OP_DIV:
-            opStr = "div";
-            break;
-        }
-
-        return builder.create<BinaryOp>(loc, builder.getStringAttr(opStr), lhs, result);
-    }
-
-    /// Process factor and return the resulting value
-    mlir::Value processFactor(ASTFactor &factor) {
-        auto loc = builder.getUnknownLoc();
-
-        if (auto *num = dynamic_cast<ASTNum *>(&factor)) {
-            // Numeric literal
-            if (num->type == TYPE_INT) {
-                return builder.create<ConstantOp>(loc, num->i_val);
-            } else if (num->type == TYPE_FLOAT) {
-                return builder.create<ConstantOp>(loc, num->f_val);
-            }
-        } else if (auto *var = dynamic_cast<ASTVar *>(&factor)) {
-            // Variable reference
-            return processVar(*var);
-        } else if (auto *call = dynamic_cast<ASTCall *>(&factor)) {
-            // Function call
-            std::vector<mlir::Value> arguments;
-
-            for (auto &arg : call->args) {
-                arguments.push_back(processExpression(*arg));
-            }
-
-            return builder.create<CallOp>(loc, llvm::StringRef(call->id), arguments).getResult();
-        } else if (auto *expr = dynamic_cast<ASTExpression *>(&factor)) {
-            // Expression
-            return processExpression(*expr);
-        }
-
-        llvm::errs() << "Unknown factor type\n";
-        return nullptr;
+        return "eq";
     }
 };
 
@@ -473,8 +403,7 @@ class MLIRGenImpl {
 namespace mlir {
 namespace cminusf {
 
-/// The public API for generating MLIR from the C-minus-f AST
-mlir::OwningOpRef<mlir::ModuleOp> mlirGen(mlir::MLIRContext &context, std::unique_ptr<ASTNode> root) {
+mlir::OwningOpRef<mlir::ModuleOp> mlirGen(mlir::MLIRContext &context, ASTProgram &root) {
     MLIRGenImpl impl(context);
     return impl.mlirGen(root);
 }

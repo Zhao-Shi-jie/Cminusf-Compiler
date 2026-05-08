@@ -14,16 +14,22 @@ int funArray(int u[], int v[]) {
     int temp;
     a = u[0];
     b = v[0];
+    output(u[0]);
     if (a < b) {
         temp = a;
         a = b;
         b = temp;
     }
+    output(a);
+    output(b);
     return gcd(a, b);
 }
 
 int main(void) {
+    int res;
     x[0] = 90;
     y[0] = 18;
-    return funArray(x, y);
+    res = funArray(x, y);
+    output(res);
+    return res;
 }

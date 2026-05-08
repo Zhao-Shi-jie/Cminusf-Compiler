@@ -1,4 +1,4 @@
-cmake_minimum_required( VERSION 3.8 )
+cmake_minimum_required( VERSION 3.16 )
 project(CMINUSF)
 
 set(CMAKE_C_FLAGS "${CMAKE_CXX_FLAGS} -std=c99")
@@ -27,8 +27,10 @@ set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
 find_package(FLEX REQUIRED)
 find_package(BISON REQUIRED)
 # set(CMAKE_INSTALL_PREFIX "/data/home/zsj/MLIR-Related/llvm-project/build/default-install" CACHE PATH "Installation directory" FORCE)
-set(MLIR_DIR "/data/home/zsj/MLIR-Related/llvm-project/build/default/lib/cmake/mlir" CACHE PATH "Path to MLIR cmake files")
-set(LLVM_DIR "/data/home/zsj/MLIR-Related/llvm-project/build/default/lib/cmake/llvm" CACHE PATH "Path to LLVM cmake files")
+set(LLVM_INSTALL_PREFIX "/data/home/zsj/MLIR-Related/llvm-project/build/cminusf-dev-install"
+    CACHE PATH "LLVM/MLIR install prefix")
+set(MLIR_DIR "${LLVM_INSTALL_PREFIX}/lib/cmake/mlir" CACHE PATH "Path to MLIR cmake files")
+set(LLVM_DIR "${LLVM_INSTALL_PREFIX}/lib/cmake/llvm" CACHE PATH "Path to LLVM cmake files")
 find_package(LLVM REQUIRED CONFIG)
 find_package(MLIR REQUIRED CONFIG)
 list(APPEND CMAKE_MODULE_PATH "${MLIR_CMAKE_DIR}")
@@ -49,6 +51,7 @@ include(HandleLLVMOptions)
 
 llvm_map_components_to_libnames(
     llvm_libs
+    option
     support
     core
 )

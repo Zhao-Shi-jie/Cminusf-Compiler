@@ -1,5 +1,6 @@
 #include "Dialect.h"
 #include "ast.hpp"
+
 #include "mlir/Dialect/Func/IR/FuncOps.h"
 #include "mlir/IR/Attributes.h"
 #include "mlir/IR/Builders.h"
@@ -8,15 +9,22 @@
 #include "mlir/IR/BuiltinOps.h"
 #include "mlir/IR/BuiltinTypes.h"
 #include "mlir/IR/Diagnostics.h"
+#include "mlir/IR/Dialect.h"
 #include "mlir/IR/FunctionImplementation.h"
+#include "mlir/IR/OpDefinition.h"
 #include "mlir/IR/OpImplementation.h"
 #include "mlir/IR/Operation.h"
 #include "mlir/IR/OperationSupport.h"
 #include "mlir/IR/Types.h"
+#include "mlir/Interfaces/CallInterfaces.h"
+#include "mlir/Interfaces/InferTypeOpInterface.h"
+#include "mlir/Interfaces/SideEffectInterfaces.h"
 #include "mlir/Support/LogicalResult.h"
 #include "syntax_analyzer.h"
 #include "llvm/Support/Debug.h"
+
 #include <cstdint>
+#include <optional>
 #include <string>
 
 using namespace mlir;
@@ -117,15 +125,16 @@ mlir::LogicalResult ConstantOp::verify() {
 // VarDeclarationOp
 //===----------------------------------------------------------------------===//
 
-// void VarDeclOp::build(mlir::OpBuilder &builder, mlir::OperationState &state, StringAttr var_name, Type
-// var_type) {
+// void VarDeclOp::build(mlir::OpBuilder &builder, mlir::OperationState &state, StringAttr var_name,
+// Type var_type) {
 //     state.addAttribute("var_name", var_name);
 //     state.addAttribute("var_type_attr", TypeAttr::get(var_type));
 //     // 结果类型与参数类型一致
 //     state.addTypes(var_type);
 // }
 
-// void VarDeclOp::build(mlir::OpBuilder &builder, mlir::OperationState &state, mlir::StringAttr var_name,
+// void VarDeclOp::build(mlir::OpBuilder &builder, mlir::OperationState &state, mlir::StringAttr
+// var_name,
 //                       mlir::Type var_type,
 //                       /*optional*/ mlir::IntegerAttr size) {
 //     state.addAttribute("var_name", var_name);
@@ -184,7 +193,8 @@ LogicalResult VarDeclOp::verify() {
 
         // 验证MemRefType的维度大小与size属性一致
         if (memRefType.getDimSize(0) != size)
-            return emitOpError("memref维度大小 ") << memRefType.getDimSize(0) << " 与size属性不匹配 " << size;
+            return emitOpError("memref维度大小 ")
+                   << memRefType.getDimSize(0) << " 与size属性不匹配 " << size;
     } else {
         // 如果没有size属性，结果类型必须与变量类型相同
         if (resultType != baseType)
@@ -200,38 +210,68 @@ LogicalResult VarDeclOp::verify() {
 
 void FunDeclOp::build(mlir::OpBuilder &builder, mlir::OperationState &state, llvm::StringRef name,
                       mlir::FunctionType type, llvm::ArrayRef<mlir::NamedAttribute> attrs) {
-    // 使用 FunctionOpInterface 提供的便捷方法来填充我们的 Cminusf_FunDeclOp 状态
-    // 并创建一个入口块
-    buildWithEntryBlock(builder, state, name, type, attrs, type.getInputs());
+    state.addAttribute(getSymNameAttrName(state.name), builder.getStringAttr(name));
+    state.addAttribute(getFunctionTypeAttrName(state.name), TypeAttr::get(type));
+    state.addAttributes(attrs);
+    state.addRegion();
 }
 
-ParseResult FunDeclOp::parse(mlir::OpAsmParser &parser, mlir::OperationState &result) {
-    // 调用 FunctionOpInterface 提供的工具方法来解析函数操作
-    auto buildFuncType = [](mlir::Builder &builder, llvm::ArrayRef<mlir::Type> argTypes,
-                            llvm::ArrayRef<mlir::Type> results, mlir::function_interface_impl::VariadicFlag,
-                            std::string &) { return builder.getFunctionType(argTypes, results); };
+// ParseResult FunDeclOp::parse(mlir::OpAsmParser &parser, mlir::OperationState &result) {
+//     // 调用 FunctionOpInterface 提供的工具方法来解析函数操作
+//     auto buildFuncType = [](mlir::Builder &builder, llvm::ArrayRef<mlir::Type> argTypes,
+//                             llvm::ArrayRef<mlir::Type> results,
+//                             mlir::function_interface_impl::VariadicFlag, std::string &) { return
+//                             builder.getFunctionType(argTypes, results); };
 
-    return mlir::function_interface_impl::parseFunctionOp(
-        parser, result, /*allowVariadic=*/false, getFunctionTypeAttrName(result.name), buildFuncType,
-        getArgAttrsAttrName(result.name), getResAttrsAttrName(result.name));
-}
+//     return mlir::function_interface_impl::parseFunctionOp(
+//         parser, result, /*allowVariadic=*/false, getFunctionTypeAttrName(result.name),
+//         buildFuncType, getArgAttrsAttrName(result.name), getResAttrsAttrName(result.name));
+// }
 
-void FunDeclOp::print(mlir::OpAsmPrinter &p) {
-    // 调用 FunctionOpInterface 提供的工具方法来打印函数操作
-    mlir::function_interface_impl::printFunctionOp(p, *this, /*isVariadic=*/false,
-                                                   getFunctionTypeAttrName().getValue(),
-                                                   getArgAttrsAttrName(), getResAttrsAttrName());
-}
+// void FunDeclOp::print(mlir::OpAsmPrinter &p) {
+//     // 调用 FunctionOpInterface 提供的工具方法来打印函数操作
+//     // mlir::function_interface_impl::printFunctionOp(p, *this, /*isVariadic=*/false,
+//     //                                                getFunctionTypeAttrName().getValue(),
+//     //                                                getArgAttrsAttrName(),
+//     getResAttrsAttrName()); llvm::errs() << "Debug: FunDeclOp::print called!\n"; p << " @" <<
+//     getSymName(); auto fnType = getFunctionType(); p << "(";
+//     llvm::interleaveComma(fnType.getInputs(), p, [&](Type type) { p << type; });
+//     p << ")";
+
+//     if (fnType.getResults().empty()) {
+//         p << " -> ()";
+//     } else {
+//         p << " -> ";
+//         if (fnType.getResults().size() == 1) {
+//             p << fnType.getResult(0);
+//         } else {
+//             p << "(";
+//             llvm::interleaveComma(fnType.getResults(), p, [&](Type type) { p << type; });
+//             p << ")";
+//         }
+//     }
+
+//     p << " {";
+//     if (!getBody().empty()) {
+//         p.printNewline();
+//         p.printRegion(getBody(), /*printEntryBlockArgs=*/false,
+//                      /*printBlockTerminators=*/true);
+//     }
+//     p << "}";
+// }
 
 mlir::Region *FunDeclOp::getCallableRegion() { return &getBody(); }
 
-llvm::ArrayRef<mlir::Type> FunDeclOp::getCallableResults() { return getFunctionType().getResults(); }
+llvm::ArrayRef<mlir::Type> FunDeclOp::getCallableResults() {
+    return getFunctionType().getResults();
+}
 
 //===----------------------------------------------------------------------===//
 // CallOp
 //===----------------------------------------------------------------------===//
 
-void CallOp::build(OpBuilder &builder, OperationState &result, StringRef callee, ArrayRef<Value> arguments) {
+void CallOp::build(OpBuilder &builder, OperationState &result, StringRef callee,
+                   ArrayRef<Value> arguments) {
     result.addAttribute("callee", FlatSymbolRefAttr::get(builder.getContext(), callee));
     result.addOperands(arguments);
 
@@ -276,8 +316,8 @@ LogicalResult CallOp::verify() {
     unsigned numParameters = funcOp.getNumArguments();
 
     if (numArguments != numParameters) {
-        return emitError() << "incorrect number of operands for callee '" << callee << "': expected "
-                           << numParameters << ", but got " << numArguments;
+        return emitError() << "incorrect number of operands for callee '" << callee
+                           << "': expected " << numParameters << ", but got " << numArguments;
     }
 
     // 3. 验证参数类型是否一致
@@ -285,10 +325,19 @@ LogicalResult CallOp::verify() {
     auto parameterTypes = funcOp.getArgumentTypes();
 
     for (unsigned i = 0; i < numArguments; ++i) {
-        if (argumentTypes[i] != parameterTypes[i]) {
-            return emitError() << "operand type mismatch for operand " << i << " of callee '" << callee
-                               << "': "
-                               << "expected " << parameterTypes[i] << ", but got " << argumentTypes[i];
+        auto argMemRef = argumentTypes[i].dyn_cast<MemRefType>();
+        auto paramMemRef = parameterTypes[i].dyn_cast<MemRefType>();
+        bool compatibleMemRef =
+            argMemRef && paramMemRef && argMemRef.getElementType() == paramMemRef.getElementType() &&
+            argMemRef.getRank() == paramMemRef.getRank() &&
+            (paramMemRef.getDimSize(0) == ShapedType::kDynamic ||
+             argMemRef.getDimSize(0) == paramMemRef.getDimSize(0));
+
+        if (argumentTypes[i] != parameterTypes[i] && !compatibleMemRef) {
+            return emitError() << "operand type mismatch for operand " << i << " of callee '"
+                               << callee << "': "
+                               << "expected " << parameterTypes[i] << ", but got "
+                               << argumentTypes[i];
         }
     }
 
@@ -304,8 +353,10 @@ LogicalResult CallOp::verify() {
 
     for (unsigned i = 0; i < resultTypes.size(); ++i) {
         if (resultTypes[i] != funcResultTypes[i]) {
-            return emitError() << "result type mismatch for result " << i << " of callee '" << callee << "': "
-                               << "expected " << funcResultTypes[i] << ", but got " << resultTypes[i];
+            return emitError() << "result type mismatch for result " << i << " of callee '"
+                               << callee << "': "
+                               << "expected " << funcResultTypes[i] << ", but got "
+                               << resultTypes[i];
         }
     }
 
@@ -360,7 +411,8 @@ LogicalResult AssignOp::verify() {
 }
 
 LogicalResult AssignOp::inferReturnTypes(MLIRContext *context, std::optional<Location> location,
-                                         ValueRange operands, DictionaryAttr attributes, RegionRange regions,
+                                         ValueRange operands, DictionaryAttr attributes,
+                                         RegionRange regions,
                                          SmallVectorImpl<Type> &inferredReturnTypes) {
     // 确保有两个操作数
     if (operands.size() != 2)
@@ -496,8 +548,8 @@ LogicalResult CmpOp::verify() {
     return success();
 }
 
-// LogicalResult CmpOp::inferReturnTypes(MLIRContext *context, Optional<Location> location, ValueRange
-// operands,
+// LogicalResult CmpOp::inferReturnTypes(MLIRContext *context, Optional<Location> location,
+// ValueRange operands,
 //                                       DictionaryAttr attributes, RegionRange regions,
 //                                       SmallVectorImpl<Type> &inferredReturnTypes) {
 
@@ -644,7 +696,8 @@ ParseResult BinaryOp::parse(OpAsmParser &parser, OperationState &result) {
             }
 
             // 验证操作数类型是否合法
-            if ((!lhsType.isF32() && !lhsType.isInteger(32)) || (!rhsType.isF32() && !rhsType.isInteger(32)))
+            if ((!lhsType.isF32() && !lhsType.isInteger(32)) ||
+                (!rhsType.isF32() && !rhsType.isInteger(32)))
                 return parser.emitError(parser.getNameLoc(), "操作数类型必须是 f32 或 i32");
 
             // 解析操作数
@@ -699,12 +752,12 @@ LogicalResult BinaryOp::verify() {
     // 加减法专用验证
     if (isAddOrSubOp()) {
         if (lhsType != rhsType)
-            return emitOpError() << binaryOp << " 操作要求操作数类型相同，但得到 " << lhsType << " 和 "
-                                 << rhsType;
+            return emitOpError() << binaryOp << " 操作要求操作数类型相同，但得到 " << lhsType
+                                 << " 和 " << rhsType;
 
         if (resultType != lhsType)
-            return emitOpError() << binaryOp << " 操作的结果类型必须与操作数类型相同，但得到 " << resultType
-                                 << " 而不是 " << lhsType;
+            return emitOpError() << binaryOp << " 操作的结果类型必须与操作数类型相同，但得到 "
+                                 << resultType << " 而不是 " << lhsType;
     }
 
     // 乘除法专用验证
@@ -712,13 +765,15 @@ LogicalResult BinaryOp::verify() {
         if (lhsType == rhsType) {
             // 相同类型操作数，结果必须相同
             if (resultType != lhsType)
-                return emitOpError() << binaryOp << " 操作中，相同类型操作数的结果类型必须相同，但得到 "
-                                     << resultType << " 而不是 " << lhsType;
+                return emitOpError()
+                       << binaryOp << " 操作中，相同类型操作数的结果类型必须相同，但得到 "
+                       << resultType << " 而不是 " << lhsType;
         } else {
             // 不同类型操作数，结果必须是 f32
             if (!resultType.isF32())
-                return emitOpError() << binaryOp << " 操作中，不同类型操作数的结果类型必须是 f32，但得到 "
-                                     << resultType;
+                return emitOpError()
+                       << binaryOp << " 操作中，不同类型操作数的结果类型必须是 f32，但得到 "
+                       << resultType;
         }
     }
 
@@ -741,8 +796,9 @@ LogicalResult BinaryOp::verify() {
 }
 
 /// 类型推断方法
-LogicalResult BinaryOp::inferReturnTypes(MLIRContext *context, Optional<Location> location,
-                                         ValueRange operands, DictionaryAttr attributes, RegionRange regions,
+LogicalResult BinaryOp::inferReturnTypes(MLIRContext *context, std::optional<Location> location,
+                                         ValueRange operands, DictionaryAttr attributes,
+                                         RegionRange regions,
                                          SmallVectorImpl<Type> &inferredReturnTypes) {
 
     // 确保有两个操作数
@@ -802,27 +858,21 @@ void IfOp::build(OpBuilder &builder, OperationState &result, Value condition,
                  function_ref<void(OpBuilder &, Location)> elseBuilder) {
     result.addOperands(condition);
 
-    // 创建 then 区域
     Region *thenRegion = result.addRegion();
-    Block *thenBlock = new Block();
-    thenRegion->push_back(thenBlock);
+    Block &thenBlock = thenRegion->emplaceBlock();
 
-    // 在 then 区域内使用给定的构建器函数
     if (thenBuilder) {
         OpBuilder::InsertionGuard guard(builder);
-        builder.setInsertionPointToStart(thenBlock);
+        builder.setInsertionPointToStart(&thenBlock);
         thenBuilder(builder, result.location);
     }
 
-    // 创建 else 区域
     Region *elseRegion = result.addRegion();
-    Block *elseBlock = new Block();
-    elseRegion->push_back(elseBlock);
+    Block &elseBlock = elseRegion->emplaceBlock();
 
-    // 在 else 区域内使用给定的构建器函数
     if (elseBuilder) {
         OpBuilder::InsertionGuard guard(builder);
-        builder.setInsertionPointToStart(elseBlock);
+        builder.setInsertionPointToStart(&elseBlock);
         elseBuilder(builder, result.location);
     }
 }
@@ -836,21 +886,12 @@ void YieldOp::build(OpBuilder &builder, OperationState &result) {
 // WhileOp
 //===----------------------------------------------------------------------===//
 
-void WhileOp::build(OpBuilder &builder, OperationState &result, Value condition,
-                    function_ref<void(OpBuilder &, Location)> bodyBuilder) {
-    result.addOperands(condition);
+void WhileOp::build(OpBuilder &builder, OperationState &result) {
+    Region *conditionRegion = result.addRegion();
+    conditionRegion->emplaceBlock();
 
-    // 创建循环体区域
     Region *bodyRegion = result.addRegion();
-    Block *bodyBlock = new Block();
-    bodyRegion->push_back(bodyBlock);
-
-    // 生成循环体内容
-    if (bodyBuilder) {
-        OpBuilder::InsertionGuard guard(builder);
-        builder.setInsertionPointToStart(bodyBlock);
-        bodyBuilder(builder, result.location);
-    }
+    bodyRegion->emplaceBlock();
 }
 
 //===----------------------------------------------------------------------===//
@@ -858,16 +899,19 @@ void WhileOp::build(OpBuilder &builder, OperationState &result, Value condition,
 //===----------------------------------------------------------------------===//
 
 mlir::LogicalResult ReturnOp::verify() {
-    auto function = cast<FunDeclOp>((*this)->getParentOp());
+    auto function = (*this)->getParentOfType<FunDeclOp>();
+    auto loweredFunction = (*this)->getParentOfType<mlir::func::FuncOp>();
+    if (!function && !loweredFunction)
+        return emitOpError() << "expects to be nested in a cminusf.fun_decl or func.func";
 
     if (getNumOperands() > 1)
         return emitOpError() << "expects at most 1 return operand";
 
     // The operand number and types must match the function signature.
-    const auto &results = function.getFunctionType().getResults();
-    if (getNumOperands() != results.size())
-        return emitOpError() << "does not return the same number of values (" << getNumOperands()
-                             << ") as the enclosing function (" << results.size() << ")";
+    auto results = function ? function.getFunctionType().getResults()
+                            : loweredFunction.getFunctionType().getResults();
+    if (getNumOperands() == 0 && !results.empty())
+        return mlir::success(); // 允许空返回，稍后会添加默认值
 
     // If the operation does not have an input, we are done.
     if (!hasOperand())
@@ -880,8 +924,8 @@ mlir::LogicalResult ReturnOp::verify() {
     if (inputType == resultType)
         return mlir::success();
 
-    return emitError() << "type of return operand (" << inputType << ") doesn't match function result type ("
-                       << resultType << ")";
+    return emitError() << "type of return operand (" << inputType
+                       << ") doesn't match function result type (" << resultType << ")";
 }
 
 #define GET_OP_CLASSES

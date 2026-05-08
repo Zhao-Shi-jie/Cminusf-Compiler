@@ -14,10 +14,20 @@ include "mlir/IR/EnumAttr.td"
 def Cminusf_Dialect : Dialect {
   let name = "cminusf";
   let cppNamespace = "mlir::cminusf";
+  let summary = "A high-level dialect for analyzing and optimizing the "
+                "Cminusf language";
+  let description = [{
+    The Cminusf dialect is a high-level representation that allows for effective
+    analysis and transformation of Cminusf programs.
+  }];
 }
 
 class Cminusf_Op<string mnemonic, list<Trait> traits = []> :
     Op<Cminusf_Dialect, mnemonic, traits>;
+
+def Cminusf_PtrType : DialectType<Cminusf_Dialect,
+    CPred<"true">, "Cminusf pointer-like type">;
+
 
 //===----------------------------------------------------------------------===//
 // ConstantOp
@@ -84,7 +94,7 @@ def Cminusf_VarDeclOp : Cminusf_Op<"var_decl", [Pure]> {
       getVarName();getSize();没有直接var访问方法，因为是混合类型
     */
     StrAttr:$var_name, 
-    AnyAttrOf<[F32Attr, I32Attr]>:$var_type_attr,
+    TypeAttr:$var_type_attr,
     OptionalAttr<I32Attr>:$size
   );
 
@@ -97,7 +107,7 @@ def Cminusf_VarDeclOp : Cminusf_Op<"var_decl", [Pure]> {
     // 标量变量
     OpBuilder<(ins "StringAttr":$var_name, "Type":$var_type), [{
       $_state.addAttribute("var_name", var_name);
-      $_state.addAttribute("var_type", TypeAttr::get(var_type));
+      $_state.addAttribute("var_type_attr", TypeAttr::get(var_type));
 
       // 结果类型是标量类型
       $_state.addTypes(var_type);
@@ -106,8 +116,8 @@ def Cminusf_VarDeclOp : Cminusf_Op<"var_decl", [Pure]> {
     // 数组变量: 额外接受 `size`
     OpBuilder<(ins "StringAttr":$var_name, "Type":$var_type, "IntegerAttr":$size), [{
       $_state.addAttribute("var_name", var_name);
-      $_state.addAttribute("var_type", TypeAttr::get(var_type));
-      $_state.addAttribute("size", size);
+      $_state.addAttribute("var_type_attr", TypeAttr::get(var_type));
+      $_state.addAttribute("size_attr", size);
 
       // 结果类型是 MemRef
       $_state.addTypes(MemRefType::get({size.getInt()}, var_type));
@@ -124,6 +134,52 @@ def Cminusf_VarDeclOp : Cminusf_Op<"var_decl", [Pure]> {
     $var_name (`[` $size^ `]`)? attr-dict `:` type($result)
   }];
   let hasVerifier = 1;
+}
+
+def Cminusf_GlobalOp : Cminusf_Op<"global", [Symbol]> {
+  let summary = "Global variable declaration";
+  let arguments = (ins SymbolNameAttr:$sym_name, TypeAttr:$type);
+  let assemblyFormat = "$sym_name `:` $type attr-dict";
+}
+
+def Cminusf_VarOp : Cminusf_Op<"var", []> {
+  let summary = "Local variable declaration";
+  let arguments = (ins StrAttr:$var_name);
+  let results = (outs AnyType:$result);
+  let assemblyFormat = "$var_name attr-dict `:` type($result)";
+}
+
+def Cminusf_LoadOp : Cminusf_Op<"load", []> {
+  let summary = "Load from a variable reference";
+  let arguments = (ins AnyType:$ref);
+  let results = (outs AnyType:$result);
+  let assemblyFormat = "$ref attr-dict `:` type($ref) `->` type($result)";
+}
+
+def Cminusf_StoreOp : Cminusf_Op<"store", []> {
+  let summary = "Store to a variable reference";
+  let arguments = (ins AnyType:$value, AnyType:$ref);
+  let assemblyFormat = "$value `,` $ref attr-dict `:` type($value) `,` type($ref)";
+}
+
+def Cminusf_SubscriptOp : Cminusf_Op<"subscript", []> {
+  let summary = "Array subscript reference";
+  let arguments = (ins AnyType:$base, I32:$index);
+  let results = (outs AnyType:$result);
+  let assemblyFormat = "$base `[` $index `]` attr-dict `:` type($base) `->` type($result)";
+}
+
+def Cminusf_BrOp : Cminusf_Op<"br", [Terminator]> {
+  let summary = "Unconditional branch in cminusf CFG";
+  let successors = (successor AnySuccessor:$dest);
+  let assemblyFormat = "$dest attr-dict";
+}
+
+def Cminusf_CondBrOp : Cminusf_Op<"cond_br", [Terminator]> {
+  let summary = "Conditional branch in cminusf CFG";
+  let arguments = (ins I32:$condition);
+  let successors = (successor AnySuccessor:$trueDest, AnySuccessor:$falseDest);
+  let assemblyFormat = "$condition `,` $trueDest `,` $falseDest attr-dict";
 }
 
 //===----------------------------------------------------------------------===//
@@ -168,7 +224,10 @@ def Cminusf_FunDeclOp : Cminusf_Op<"fun_decl", [
     ArrayRef<Type> getResultTypes() { return getFunctionType().getResults(); }
   }];
   
-  let hasCustomAssemblyFormat = 1;
+  // let hasCustomAssemblyFormat = 1;
+  let assemblyFormat = [{
+    $sym_name `(` `)` `->` $function_type $body attr-dict
+  }];
   let skipDefaultBuilders = 1;
   // let assemblyFormat = [{
   //   $sym_name `(` `:` $function_type `)` (`arg_attrs` $arg_attrs^)? (`res_attrs` $res_attrs^)? attr-dict-with-keyword $body
@@ -434,7 +493,6 @@ def Cminusf_BinaryOp : Cminusf_Op<"binary", [Pure,
 //===----------------------------------------------------------------------===//
 def Cminusf_IfOp : Cminusf_Op<"if", [
     RecursiveMemoryEffects,
-    SingleBlockImplicitTerminator<"YieldOp">,
     NoRegionArguments
   ]> {
   
@@ -473,18 +531,18 @@ def Cminusf_IfOp : Cminusf_Op<"if", [
 def Cminusf_YieldOp : Cminusf_Op<"yield", [Pure, ReturnLike, Terminator]> {
   let summary = "Region terminator operation";
   let description = [{
-    The "yield" operation terminates a region without returning values.
+    The "yield" operation terminates a cminusf region.  While condition regions
+    yield an i32 condition; statement regions yield no value.
   }];
   
-  let arguments = (ins);
+  let arguments = (ins Optional<I32>:$value);
   let results = (outs);
   
-  // 修复 build 方法
   let builders = [
     OpBuilder<(ins)>
   ];
   
-  let assemblyFormat = "attr-dict";
+  let assemblyFormat = "($value^ `:` type($value))? attr-dict";
 }
 
 //===----------------------------------------------------------------------===//
@@ -492,35 +550,33 @@ def Cminusf_YieldOp : Cminusf_Op<"yield", [Pure, ReturnLike, Terminator]> {
 //===----------------------------------------------------------------------===//
 def Cminusf_WhileOp : Cminusf_Op<"while", [
     RecursiveMemoryEffects,
-    SingleBlockImplicitTerminator<"YieldOp">,
     NoRegionArguments
   ]> {
   let summary = "While loop operation";
   let description = [{
     Example:
     ```mlir
-    cminusf.while %condition {
+    cminusf.while {
+      %condition = ...
+      cminusf.yield %condition : i32
+    } do {
       // body operations
       cminusf.yield
     }
     ```
   }];
   
-  let arguments = (ins I32:$condition);
+  let arguments = (ins);
   let results = (outs);
-  let regions = (region SizedRegion<1>:$body);
+  let regions = (region SizedRegion<1>:$condition, SizedRegion<1>:$body);
   
   let assemblyFormat = [{
-    $condition `{` $body `}` attr-dict
+    `{` $condition `}` `do` `{` $body `}` attr-dict
   }];
   
-  // 添加简单的构建器
   let builders = [
-    OpBuilder<(ins "Value":$condition, 
-                  "function_ref<void(OpBuilder &, Location)>":$bodyBuilder)>
+    OpBuilder<(ins)>
   ];
-  
-  // 简单的验证器
 }
 
 //===----------------------------------------------------------------------===//
@@ -562,7 +618,7 @@ def Cminusf_CallOp : Cminusf_Op<"call", [DeclareOpInterfaceMethods<CallOpInterfa
   
   let arguments = (ins 
     FlatSymbolRefAttr:$callee,
-    Variadic<AnyTypeOf<[F32, I32]>>:$args
+    Variadic<AnyTypeOf<[F32, I32, F32MemRef, I32MemRef]>>:$args
   );
   
   let results = (outs Optional<AnyTypeOf<[F32, I32]>>:$result);
@@ -581,8 +637,7 @@ def Cminusf_CallOp : Cminusf_Op<"call", [DeclareOpInterfaceMethods<CallOpInterfa
 //===----------------------------------------------------------------------===//
 // ReturnOp
 //===----------------------------------------------------------------------===//
-def Cminusf_ReturnOp : Cminusf_Op<"return", [Pure, HasParent<"FunDeclOp">,
-                                              Terminator]> {
+def Cminusf_ReturnOp : Cminusf_Op<"return", [Pure, Terminator]> {
   let summary = "Return statement";
   let description = [{
     Returns a value from a function.

@@ -9,16 +9,48 @@ target_link_libraries(mlir
     ${llvm_libs}
         
     # MLIR 组件
-    MLIRAnalysis
+    MLIRCallInterfaces
     MLIRDialect
     MLIRIR
-    MLIRParser
-    MLIRPass
+    MLIRInferTypeOpInterface
+    MLIRSideEffectInterfaces
     MLIRSupport
-    MLIRTransforms
 
     # 其他依赖库
     common
+)
+
+add_library(cminusf_passes
+    LoweringPasses.cpp
+)
+add_dependencies(cminusf_passes OpsIncGen)
+target_link_libraries(cminusf_passes
+    mlir
+    MLIRArithDialect
+    MLIRArithToLLVM
+    MLIRControlFlowToLLVM
+    MLIRControlFlowDialect
+    MLIRFuncToLLVM
+    MLIRFuncDialect
+    MLIRIndexToLLVM
+    MLIRLLVMCommonConversion
+    MLIRLLVMDialect
+    MLIRMemRefToLLVM
+    MLIRMemRefDialect
+    MLIRReconcileUnrealizedCasts
+    MLIRSCFToControlFlow
+    MLIRSCFDialect
+    MLIRPass
+    MLIRIR
+    MLIRTransforms
+    MLIRSupport
+    ${llvm_libs}
+)
+target_include_directories(cminusf_passes PUBLIC
+    ${PROJECT_SOURCE_DIR}/include/mlir
+    ${LLVM_INCLUDE_DIRS}
+    ${MLIR_INCLUDE_DIRS}
+    ${PROJECT_BINARY_DIR}/include/
 )
 
 # 包含 MLIR 头文件

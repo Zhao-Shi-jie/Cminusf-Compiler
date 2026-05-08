@@ -7,5 +7,6 @@ int main(void) {
     int a;
     GlobalAssign();
     a = 20;
+    output(a);
     return a;
 }
