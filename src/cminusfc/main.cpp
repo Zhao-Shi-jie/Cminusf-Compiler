@@ -6,6 +6,7 @@
 #include "mlir/Passes.h"
 #include "mlir/Pass/Pass.h"
 #include "mlir/Pass/PassManager.h"
+#include "mlir/Transforms/Passes.h"
 #include "mlir/Target/LLVMIR/Dialect/LLVMIR/LLVMToLLVMIRTranslation.h"
 #include "mlir/Target/LLVMIR/Export.h"
 #include "llvm/IR/IRBuilder.h"
@@ -35,6 +36,8 @@ static bool EmitAsm = false;
 static bool EmitObjShort = false;
 static bool EmitObj = false;
 static bool EmitExe = false;
+static bool EmitOpStats = false;
+static int OptLevel = 0;
 
 extern "C" {
 #include "syntax_tree.h"
@@ -95,11 +98,35 @@ static mlir::OwningOpRef<mlir::ModuleOp> generateMLIRModule(mlir::MLIRContext &c
 }
 
 static bool lowerMLIRModule(mlir::ModuleOp module, mlir::MLIRContext &context,
-                            bool toLLVMDialect) {
+                            bool toLLVMDialect, int optLevel = 0) {
     mlir::PassManager pm(&context);
+
+    // Optional: print op stats before lowering
+    if (EmitOpStats)
+        pm.addPass(mlir::cminusf::createPrintCminusfOpCountPass());
+
+    // Optimization passes at the cminusf dialect level (run before lowering)
+    if (optLevel >= 1) {
+        pm.addPass(mlir::cminusf::createCminusfConstantFoldingPass());
+        pm.addPass(mlir::cminusf::createCminusfConstantPropagationPass());
+    }
+
     pm.addPass(mlir::cminusf::createLowerCminusfToStandardPass());
+
+    // Standard MLIR optimization passes (run after lowering to standard dialects)
+    if (optLevel >= 1) {
+        pm.addPass(mlir::createCanonicalizerPass());
+        pm.addPass(mlir::createCSEPass());
+        pm.addPass(mlir::createSymbolDCEPass());
+    }
+    if (optLevel >= 2) {
+        pm.addPass(mlir::createInlinerPass());
+        pm.addPass(mlir::createLoopInvariantCodeMotionPass());
+    }
+
     if (toLLVMDialect)
         pm.addPass(mlir::cminusf::createLowerStandardToLLVMDialectPass());
+
     if (mlir::succeeded(pm.run(module)))
         return true;
 
@@ -142,7 +169,7 @@ static bool emitMLIRBackedLLVMIR(ASTProgram &root, std::ostream &out) {
     auto module = generateMLIRModule(context, root);
     if (!module)
         return false;
-    if (!lowerMLIRModule(*module, context, /*toLLVMDialect=*/true))
+    if (!lowerMLIRModule(*module, context, /*toLLVMDialect=*/true, OptLevel))
         return false;
 
     llvm::LLVMContext llvmContext;
@@ -164,7 +191,7 @@ static bool emitMLIRBackedLLVMIR(ASTProgram &root, std::ostream &out) {
 
 static void usage(const char *argv0) {
     std::cerr << "Usage: " << argv0
-              << " [--emit-ast|--emit-mlir|--emit-standard-mlir|--emit-llvm-dialect|--emit-llvm|-S|-c|--emit-obj|--emit-exe] input.cminus [-o output]\n";
+              << " [--emit-ast|--emit-mlir|--emit-standard-mlir|--emit-llvm-dialect|--emit-llvm|-S|-c|--emit-obj|--emit-exe] [--emit-op-stats] [-O0|-O1|-O2|-O3] input.cminus [-o output]\n";
 }
 
 static bool parseArgs(int argc, char **argv) {
@@ -188,6 +215,16 @@ static bool parseArgs(int argc, char **argv) {
             EmitObj = true;
         } else if (arg == "--emit-exe" || arg == "-emit-exe") {
             EmitExe = true;
+        } else if (arg == "--emit-op-stats" || arg == "-emit-op-stats") {
+            EmitOpStats = true;
+        } else if (arg == "-O0") {
+            OptLevel = 0;
+        } else if (arg == "-O1") {
+            OptLevel = 1;
+        } else if (arg == "-O2") {
+            OptLevel = 2;
+        } else if (arg == "-O3") {
+            OptLevel = 3;
         } else if (arg == "-o") {
             if (++i >= argc)
                 return false;
@@ -233,9 +270,24 @@ int main(int argc, char **argv) {
         if (!module)
             return 1;
 
+        if (EmitMlir && (EmitOpStats || OptLevel > 0)) {
+            // Run optimization passes at the cminusf level without lowering.
+            mlir::PassManager pm(&context);
+            if (EmitOpStats)
+                pm.addPass(mlir::cminusf::createPrintCminusfOpCountPass());
+            if (OptLevel >= 1) {
+                pm.addPass(mlir::cminusf::createCminusfConstantFoldingPass());
+                pm.addPass(mlir::cminusf::createCminusfConstantPropagationPass());
+            }
+            if (mlir::failed(pm.run(*module))) {
+                std::cerr << "Error: failed to optimize cminusf MLIR\n";
+                return 1;
+            }
+        }
+
         if (EmitStandardMlir || EmitLlvmDialect) {
             // 通过 MLIR PassManager 运行项目自己的 lowering pass。
-            if (!lowerMLIRModule(*module, context, EmitLlvmDialect))
+            if (!lowerMLIRModule(*module, context, EmitLlvmDialect, OptLevel))
                 return 1;
         }
 

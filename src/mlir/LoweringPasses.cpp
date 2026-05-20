@@ -735,6 +735,333 @@ class LowerStandardToLLVMDialectPass
     }
 };
 
+struct PrintCminusfOpCountPass
+    : public PassWrapper<PrintCminusfOpCountPass, OperationPass<ModuleOp>> {
+  MLIR_DEFINE_EXPLICIT_INTERNAL_INLINE_TYPE_ID(PrintCminusfOpCountPass)
+
+  StringRef getArgument() const final { return "print-cminusf-op-count"; }
+  StringRef getDescription() const final {
+    return "Print the count of each cminusf dialect operation in the module";
+  }
+
+  void runOnOperation() final {
+    ModuleOp module = getOperation();
+    llvm::StringMap<unsigned> opCounts;
+
+    module.walk([&](Operation *op) {
+      if (op->getDialect() ==
+          module.getContext()->getLoadedDialect<CminusfDialect>())
+        opCounts[op->getName().getStringRef()]++;
+    });
+
+    if (opCounts.empty()) {
+      llvm::outs() << "No cminusf operations found.\n";
+      return;
+    }
+
+    llvm::outs() << "Cminusf op counts for module:\n";
+    for (const auto &entry : opCounts)
+      llvm::outs() << "  " << entry.first().str() << ": " << entry.second << "\n";
+  }
+};
+
+struct CminusfConstantPropagationPass
+    : public PassWrapper<CminusfConstantPropagationPass, OperationPass<ModuleOp>> {
+  MLIR_DEFINE_EXPLICIT_INTERNAL_INLINE_TYPE_ID(CminusfConstantPropagationPass)
+
+  StringRef getArgument() const final { return "cminusf-const-prop"; }
+  StringRef getDescription() const final {
+    return "Propagate constants through variables in the cminusf dialect";
+  }
+
+  void runOnOperation() final {
+    ModuleOp module = getOperation();
+
+    // For each VarOp that is stored once with a constant and never stored
+    // again, replace all loads with a copy of that constant.
+    // Only processes VarOps that are true local slots (not global refs).
+    for (auto func : module.getOps<FunDeclOp>()) {
+      SmallVector<VarOp> varsToProcess;
+      func.walk([&](VarOp var) {
+        if (var->getAttr("global_ref"))
+          return;
+        varsToProcess.push_back(var);
+      });
+
+      for (auto var : varsToProcess) {
+        if (var->use_empty())
+          continue;
+
+        // Collect all stores and their values.
+        SmallVector<ConstantOp> storedConstants;
+        bool hasNonConstantStore = false;
+        for (auto &use : var->getUses()) {
+          if (auto storeOp = dyn_cast<StoreOp>(use.getOwner())) {
+            if (auto constOp = storeOp.getValue().getDefiningOp<ConstantOp>())
+              storedConstants.push_back(constOp);
+            else
+              hasNonConstantStore = true;
+          }
+        }
+
+        // Only propagate when the variable has exactly one store and it's a
+        // constant.  This avoids complex cases like store-then-modify.
+        if (storedConstants.size() != 1 || hasNonConstantStore)
+          continue;
+
+        // Collect loads before modifying anything.
+        SmallVector<LoadOp> loadsToReplace;
+        for (auto &use : var->getUses()) {
+          if (auto loadOp = dyn_cast<LoadOp>(use.getOwner()))
+            loadsToReplace.push_back(loadOp);
+        }
+
+        ConstantOp constOp = storedConstants.front();
+        for (auto loadOp : loadsToReplace) {
+          OpBuilder builder(loadOp);
+          Value newConst;
+          auto intAttr = constOp.getValue().dyn_cast<IntegerAttr>();
+          auto floatAttr = constOp.getValue().dyn_cast<FloatAttr>();
+          if (intAttr)
+            newConst = builder.create<ConstantOp>(loadOp.getLoc(), static_cast<int>(intAttr.getInt()));
+          else if (floatAttr)
+            newConst = builder.create<ConstantOp>(loadOp.getLoc(),
+                                                  floatAttr.getValue().convertToFloat());
+          if (!newConst)
+            continue;
+          loadOp.replaceAllUsesWith(newConst);
+          loadOp.erase();
+        }
+      }
+    }
+  }
+};
+
+//===----------------------------------------------------------------------===//
+// Constant Folding Pass
+//===----------------------------------------------------------------------===//
+
+// Fold binary operations where both operands are constants.
+// e.g., cminusf.binary add, constant(2), constant(3)  -->  constant(5)
+struct FoldConstantBinaryOp : public OpRewritePattern<BinaryOp> {
+  using OpRewritePattern<BinaryOp>::OpRewritePattern;
+
+  LogicalResult matchAndRewrite(BinaryOp op,
+                                PatternRewriter &rewriter) const override {
+    auto lhsConst = op.getLhs().getDefiningOp<ConstantOp>();
+    auto rhsConst = op.getRhs().getDefiningOp<ConstantOp>();
+    if (!lhsConst || !rhsConst)
+      return failure();
+
+    Attribute lhsVal = lhsConst.getValue();
+    Attribute rhsVal = rhsConst.getValue();
+
+    bool lhsInt = lhsVal.isa<IntegerAttr>();
+    bool rhsInt = rhsVal.isa<IntegerAttr>();
+    bool lhsFloat = lhsVal.isa<FloatAttr>();
+    bool rhsFloat = rhsVal.isa<FloatAttr>();
+
+    if (!(lhsInt || lhsFloat) || !(rhsInt || rhsFloat))
+      return failure();
+
+    Location loc = op.getLoc();
+    Value result;
+
+    if (lhsInt && rhsInt) {
+      int64_t l = lhsVal.cast<IntegerAttr>().getInt();
+      int64_t r = rhsVal.cast<IntegerAttr>().getInt();
+      int64_t v;
+      switch (op.getOpType()) {
+      case BinaryOpType::add: v = l + r; break;
+      case BinaryOpType::sub: v = l - r; break;
+      case BinaryOpType::mul: v = l * r; break;
+      case BinaryOpType::div:
+        if (r == 0) return failure();
+        v = l / r; break;
+      default: return failure();
+      }
+      result = rewriter.create<ConstantOp>(loc, static_cast<int>(v));
+    } else {
+      float l = lhsFloat ? lhsVal.cast<FloatAttr>().getValue().convertToFloat()
+                         : static_cast<float>(lhsVal.cast<IntegerAttr>().getInt());
+      float r = rhsFloat ? rhsVal.cast<FloatAttr>().getValue().convertToFloat()
+                         : static_cast<float>(rhsVal.cast<IntegerAttr>().getInt());
+      float v;
+      switch (op.getOpType()) {
+      case BinaryOpType::add: v = l + r; break;
+      case BinaryOpType::sub: v = l - r; break;
+      case BinaryOpType::mul: v = l * r; break;
+      case BinaryOpType::div:
+        if (r == 0.0f) return failure();
+        v = l / r; break;
+      default: return failure();
+      }
+      result = rewriter.create<ConstantOp>(loc, v);
+    }
+    rewriter.replaceOp(op, result);
+    return success();
+  }
+};
+
+// Fold identity operations: add/sub with 0, mul/div with 1
+struct FoldBinaryIdentityOp : public OpRewritePattern<BinaryOp> {
+  using OpRewritePattern<BinaryOp>::OpRewritePattern;
+
+  LogicalResult matchAndRewrite(BinaryOp op,
+                                PatternRewriter &rewriter) const override {
+    auto rhsConst = op.getRhs().getDefiningOp<ConstantOp>();
+    if (!rhsConst)
+      return failure();
+
+    auto attr = rhsConst.getValue();
+    bool isZero = false, isOne = false;
+
+    if (auto intAttr = attr.dyn_cast<IntegerAttr>()) {
+      isZero = (intAttr.getInt() == 0);
+      isOne = (intAttr.getInt() == 1);
+    } else if (auto floatAttr = attr.dyn_cast<FloatAttr>()) {
+      isZero = floatAttr.getValue().isZero();
+      isOne = floatAttr.getValue().isExactlyValue(1.0f);
+    }
+
+    if (!isZero && !isOne)
+      return failure();
+
+    switch (op.getOpType()) {
+    case BinaryOpType::add:
+    case BinaryOpType::sub:
+      if (isZero) {
+        rewriter.replaceOp(op, op.getLhs());
+        return success();
+      }
+      break;
+    case BinaryOpType::mul:
+    case BinaryOpType::div:
+      if (isOne) {
+        rewriter.replaceOp(op, op.getLhs());
+        return success();
+      }
+      break;
+    }
+    return failure();
+  }
+};
+
+// Fold comparisons where both operands are the same SSA value.
+// cmp(eq, %x, %x) -> constant(1), cmp(ne, %x, %x) -> constant(0), etc.
+struct FoldCmpSameOperand : public OpRewritePattern<CmpOp> {
+  using OpRewritePattern<CmpOp>::OpRewritePattern;
+
+  LogicalResult matchAndRewrite(CmpOp op,
+                                PatternRewriter &rewriter) const override {
+    if (op.getLhs() != op.getRhs())
+      return failure();
+
+    Location loc = op.getLoc();
+    Value result;
+    switch (op.getPredicate()) {
+    case CmpPredicate::eq:
+    case CmpPredicate::le:
+    case CmpPredicate::ge:
+      result = rewriter.create<ConstantOp>(loc, 1);
+      break;
+    case CmpPredicate::ne:
+    case CmpPredicate::lt:
+    case CmpPredicate::gt:
+      result = rewriter.create<ConstantOp>(loc, 0);
+      break;
+    }
+    rewriter.replaceOp(op, result);
+    return success();
+  }
+};
+
+// Fold comparisons where both sides are constants.
+struct FoldConstantCmpOp : public OpRewritePattern<CmpOp> {
+  using OpRewritePattern<CmpOp>::OpRewritePattern;
+
+  LogicalResult matchAndRewrite(CmpOp op,
+                                PatternRewriter &rewriter) const override {
+    auto lhsConst = op.getLhs().getDefiningOp<ConstantOp>();
+    auto rhsConst = op.getRhs().getDefiningOp<ConstantOp>();
+    if (!lhsConst || !rhsConst)
+      return failure();
+
+    Attribute lhsVal = lhsConst.getValue();
+    Attribute rhsVal = rhsConst.getValue();
+
+    Location loc = op.getLoc();
+    bool ret;
+    if (lhsVal.isa<IntegerAttr>() && rhsVal.isa<IntegerAttr>()) {
+      int64_t l = lhsVal.cast<IntegerAttr>().getInt();
+      int64_t r = rhsVal.cast<IntegerAttr>().getInt();
+      ret = evalCmp(op.getPredicate(), l, r);
+    } else {
+      float l = lhsVal.isa<FloatAttr>()
+                    ? lhsVal.cast<FloatAttr>().getValue().convertToFloat()
+                    : static_cast<float>(lhsVal.cast<IntegerAttr>().getInt());
+      float r = rhsVal.isa<FloatAttr>()
+                    ? rhsVal.cast<FloatAttr>().getValue().convertToFloat()
+                    : static_cast<float>(rhsVal.cast<IntegerAttr>().getInt());
+      ret = evalCmp(op.getPredicate(), l, r);
+    }
+    Value folded = rewriter.create<ConstantOp>(loc, ret ? 1 : 0);
+    rewriter.replaceOp(op, folded);
+    return success();
+  }
+
+  static bool evalCmp(CmpPredicate pred, int64_t l, int64_t r) {
+    switch (pred) {
+    case CmpPredicate::eq: return l == r;
+    case CmpPredicate::ne: return l != r;
+    case CmpPredicate::lt: return l < r;
+    case CmpPredicate::le: return l <= r;
+    case CmpPredicate::gt: return l > r;
+    case CmpPredicate::ge: return l >= r;
+    }
+    return false;
+  }
+  static bool evalCmp(CmpPredicate pred, float l, float r) {
+    switch (pred) {
+    case CmpPredicate::eq: return l == r;
+    case CmpPredicate::ne: return l != r;
+    case CmpPredicate::lt: return l < r;
+    case CmpPredicate::le: return l <= r;
+    case CmpPredicate::gt: return l > r;
+    case CmpPredicate::ge: return l >= r;
+    }
+    return false;
+  }
+};
+
+struct CminusfConstantFoldingPass
+    : public PassWrapper<CminusfConstantFoldingPass, OperationPass<ModuleOp>> {
+  MLIR_DEFINE_EXPLICIT_INTERNAL_INLINE_TYPE_ID(CminusfConstantFoldingPass)
+
+  StringRef getArgument() const final { return "cminusf-const-fold"; }
+  StringRef getDescription() const final {
+    return "Apply constant folding and algebraic simplifications on cminusf ops";
+  }
+
+  void getDependentDialects(DialectRegistry &registry) const override {
+    registry.insert<CminusfDialect>();
+  }
+
+  void runOnOperation() final {
+    ModuleOp module = getOperation();
+
+    RewritePatternSet patterns(&getContext());
+    patterns.add<FoldConstantBinaryOp, FoldBinaryIdentityOp, FoldCmpSameOperand,
+                 FoldConstantCmpOp>(&getContext());
+
+    GreedyRewriteConfig config;
+    config.maxIterations = GreedyRewriteConfig::kNoLimit;
+
+    if (failed(applyPatternsAndFoldGreedily(module, std::move(patterns), config)))
+      signalPassFailure();
+  }
+};
+
 } // namespace
 
 std::unique_ptr<Pass> createLowerCminusfToStandardPass() {
@@ -745,9 +1072,24 @@ std::unique_ptr<Pass> createLowerStandardToLLVMDialectPass() {
     return std::make_unique<LowerStandardToLLVMDialectPass>();
 }
 
+std::unique_ptr<Pass> createPrintCminusfOpCountPass() {
+    return std::make_unique<PrintCminusfOpCountPass>();
+}
+
+std::unique_ptr<Pass> createCminusfConstantPropagationPass() {
+    return std::make_unique<CminusfConstantPropagationPass>();
+}
+
+std::unique_ptr<Pass> createCminusfConstantFoldingPass() {
+    return std::make_unique<CminusfConstantFoldingPass>();
+}
+
 void registerCminusfPasses() {
     PassRegistration<LowerCminusfToStandardPass>();
     PassRegistration<LowerStandardToLLVMDialectPass>();
+    PassRegistration<PrintCminusfOpCountPass>();
+    PassRegistration<CminusfConstantPropagationPass>();
+    PassRegistration<CminusfConstantFoldingPass>();
 }
 
 } // namespace cminusf

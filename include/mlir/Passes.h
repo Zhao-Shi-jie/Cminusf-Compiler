@@ -10,6 +10,9 @@ namespace cminusf {
 
 std::unique_ptr<Pass> createLowerCminusfToStandardPass();
 std::unique_ptr<Pass> createLowerStandardToLLVMDialectPass();
+std::unique_ptr<Pass> createPrintCminusfOpCountPass();
+std::unique_ptr<Pass> createCminusfConstantPropagationPass();
+std::unique_ptr<Pass> createCminusfConstantFoldingPass();
 void registerCminusfPasses();
 
 } // namespace cminusf

@@ -11,6 +11,7 @@ target_link_libraries(
     syntax
     MLIRLLVMToLLVMIRTranslation
     MLIRTargetLLVMIRExport
+    MLIRTransforms
     stdc++fs
     ${llvm_libs}
 )
