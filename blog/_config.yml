@@ -1,0 +1,34 @@
+title: "Cminusf 编译器开发笔记"
+description: "从零开始构建一个 MLIR-based 编译器，记录如何添加 Pass、构建 Pipeline"
+baseurl: "/Cminusf-Compiler"
+url: ""
+
+author:
+  name: "jie"
+
+theme: minima
+
+plugins:
+  - jekyll-feed
+  - jekyll-seo-tag
+
+markdown: kramdown
+highlighter: rouge
+
+kramdown:
+  input: GFM
+  syntax_highlighter: rouge
+
+permalink: /:year/:month/:day/:title/
+
+defaults:
+  - scope:
+      path: ""
+      type: "posts"
+    values:
+      layout: post
+
+exclude:
+  - Gemfile
+  - Gemfile.lock
+  - vendor
