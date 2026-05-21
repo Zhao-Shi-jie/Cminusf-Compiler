@@ -1,5 +1,5 @@
-title: "Cminusf 编译器开发笔记"
-description: "从零开始构建一个 MLIR-based 编译器，记录如何添加 Pass、构建 Pipeline"
+title: "JieJie's Compiler Journey"
+description: "记录编译技术、AI编译器以及LLM的学习过程，分享实现细节和技术心得"
 baseurl: "/Cminusf-Compiler"
 url: ""
 

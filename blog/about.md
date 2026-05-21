@@ -10,7 +10,6 @@ permalink: /about/
 
 - **源语言**：Cminusf（C 语言子集 + 浮点支持）
 - **技术栈**：Flex/Bison → MLIR → LLVM
-- **目标**：通过逐步添加优化 Pass 来学习 MLIR 框架
 
 ### 当前功能
 
@@ -29,7 +28,7 @@ permalink: /about/
 
 ### 博客
 
-这里记录实现过程中学到的技术，包括：
+这里记录实现过程中学到的技术（陆续更新ing），包括：
 
 - 如何添加 MLIR Pass
 - OpRewritePattern 模式匹配
