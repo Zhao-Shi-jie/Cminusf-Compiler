@@ -2,3 +2,5 @@ build/
 .cache/
 .vscode
 .DS_store
+
+3rdparty/llvm/

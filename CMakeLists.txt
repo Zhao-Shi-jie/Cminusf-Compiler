@@ -26,9 +26,8 @@ set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
 
 find_package(FLEX REQUIRED)
 find_package(BISON REQUIRED)
-# replace with your llvm-project build directory
-# set(CMAKE_INSTALL_PREFIX "/data/home/zsj/MLIR-Related/llvm-project/build/default-install" CACHE PATH "Installation directory" FORCE)
-set(LLVM_INSTALL_PREFIX "/data/home/zsj/MLIR-Related/llvm-project/build/cminusf-dev-install"
+
+set(LLVM_INSTALL_PREFIX "${CMAKE_SOURCE_DIR}/3rdparty/llvm"
     CACHE PATH "LLVM/MLIR install prefix")
 set(MLIR_DIR "${LLVM_INSTALL_PREFIX}/lib/cmake/mlir" CACHE PATH "Path to MLIR cmake files")
 set(LLVM_DIR "${LLVM_INSTALL_PREFIX}/lib/cmake/llvm" CACHE PATH "Path to LLVM cmake files")
