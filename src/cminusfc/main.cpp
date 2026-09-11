@@ -327,7 +327,7 @@ int main(int argc, char **argv) {
         return 1;
     }
 
-    auto clang = std::string("clang");
+    auto clang = shellQuote(std::filesystem::path(CMINUSF_CLANG_EXECUTABLE));
     auto result = 0;
     if (EmitAsm) {
         result = runCommand(clang + " -S -x ir " + shellQuote(llPath) + " -o " +

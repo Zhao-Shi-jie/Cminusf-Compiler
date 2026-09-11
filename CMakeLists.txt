@@ -1,6 +1,9 @@
 cmake_minimum_required( VERSION 3.16 )
 project(CMINUSF)
 
+set(CMAKE_INSTALL_PREFIX "${CMAKE_BINARY_DIR}/install"
+    CACHE PATH "Installation directory" FORCE)
+
 set(CMAKE_C_FLAGS "${CMAKE_CXX_FLAGS} -std=c99")
 
 SET(CMAKE_CXX_FLAGS_DEBUG "$ENV{CXXFLAGS} -O0 -Wall -g2 -ggdb")
@@ -26,14 +29,28 @@ set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
 
 find_package(FLEX REQUIRED)
 find_package(BISON REQUIRED)
-# replace with your llvm-project build directory
-# set(CMAKE_INSTALL_PREFIX "/data/home/zsj/MLIR-Related/llvm-project/build/default-install" CACHE PATH "Installation directory" FORCE)
-set(LLVM_INSTALL_PREFIX "/data/home/zsj/MLIR-Related/llvm-project/build/cminusf-dev-install"
+find_program(CLANG_EXECUTABLE NAMES clang)
+if(NOT CLANG_EXECUTABLE)
+    message(FATAL_ERROR "clang was not found in PATH")
+endif()
+
+set(CMINUSF_LLVM_INSTALL_PREFIX
+    "${CMAKE_SOURCE_DIR}/3rdparty/llvm-project/build/install"
     CACHE PATH "LLVM/MLIR install prefix")
-set(MLIR_DIR "${LLVM_INSTALL_PREFIX}/lib/cmake/mlir" CACHE PATH "Path to MLIR cmake files")
-set(LLVM_DIR "${LLVM_INSTALL_PREFIX}/lib/cmake/llvm" CACHE PATH "Path to LLVM cmake files")
-find_package(LLVM REQUIRED CONFIG)
-find_package(MLIR REQUIRED CONFIG)
+set(LLVM_DIR "${CMINUSF_LLVM_INSTALL_PREFIX}/lib/cmake/llvm"
+    CACHE PATH "Path to LLVM cmake files" FORCE)
+set(MLIR_DIR "${CMINUSF_LLVM_INSTALL_PREFIX}/lib/cmake/mlir"
+    CACHE PATH "Path to MLIR cmake files" FORCE)
+
+if(NOT EXISTS "${LLVM_DIR}/LLVMConfig.cmake" OR
+   NOT EXISTS "${MLIR_DIR}/MLIRConfig.cmake")
+    message(FATAL_ERROR
+        "LLVM/MLIR is not installed in ${CMINUSF_LLVM_INSTALL_PREFIX}. "
+        "Run scripts/build-llvm.sh before configuring Cminusf-Compiler.")
+endif()
+
+find_package(LLVM REQUIRED CONFIG PATHS "${LLVM_DIR}" NO_DEFAULT_PATH)
+find_package(MLIR REQUIRED CONFIG PATHS "${MLIR_DIR}" NO_DEFAULT_PATH)
 list(APPEND CMAKE_MODULE_PATH "${MLIR_CMAKE_DIR}")
 list(APPEND CMAKE_MODULE_PATH "${LLVM_CMAKE_DIR}")
 message(STATUS "Using LLVMConfig.cmake in: ${LLVM_CMAKE_DIR}")
@@ -49,6 +66,14 @@ include(AddLLVM)
 include(AddMLIR)
 include(TableGen)
 include(HandleLLVMOptions)
+
+if(NOT LLVM_ENABLE_RTTI)
+    if(MSVC)
+        add_compile_options("$<$<COMPILE_LANGUAGE:CXX>:/GR->")
+    else()
+        add_compile_options("$<$<COMPILE_LANGUAGE:CXX>:-fno-rtti>")
+    endif()
+endif()
 
 llvm_map_components_to_libnames(
     llvm_libs

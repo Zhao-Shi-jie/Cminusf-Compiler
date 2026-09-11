@@ -18,6 +18,7 @@ target_link_libraries(
 
 target_compile_definitions(cminusfc PRIVATE
     CMINUSF_SOURCE_DIR="${PROJECT_SOURCE_DIR}"
+    CMINUSF_CLANG_EXECUTABLE="${CLANG_EXECUTABLE}"
 )
 
 
